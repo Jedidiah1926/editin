@@ -16,6 +16,7 @@ import {
   silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, runChecks,
 } from './smart.js';
 import { initSubtitleUI } from './subtitle-ui.js';
+import { fitSubtitleToFormat } from './subtitles.js';
 import { loadTemplates } from './templates.js';
 import { openExport } from './export.js';
 import { TEXT_STYLES, TRANSITIONS } from './presets.js';
@@ -319,13 +320,13 @@ async function doImport(files, autoAdd = state.mode === 'easy') {
   if (!added.length) return;
   // 첫 영상이면 화면 비율 자동 맞춤
   const firstVideo = added.find((m) => m.type === 'video' && m.width && m.height);
-  if (firstVideo && !project().clips.some((c) => c.type === 'video')) {
+  if (firstVideo && !project().formatChosen && !project().clips.some((c) => c.type === 'video')) {
     const r = firstVideo.width / firstVideo.height;
     const best = Object.entries(ASPECTS).sort((a, b) => Math.abs(a[1].width / a[1].height - r) - Math.abs(b[1].width / b[1].height - r))[0][0];
     if (best !== project().aspect) setAspect(best, true);
   }
   if (autoAdd) {
-    // 쉬운 모드: 바로 타임라인에 순서대로 배치
+    // 심플 모드: 바로 타임라인에 순서대로 배치
     const visuals = added.filter((m) => m.type !== 'audio');
     const audios = added.filter((m) => m.type === 'audio');
     for (const m of visuals) addMediaClip(m.id);
@@ -502,12 +503,37 @@ function openChecks() {
 function setAspect(id, auto = false) {
   const a = ASPECTS[id];
   if (!a) return;
-  mutate('화면 비율 변경', (p) => { p.aspect = id; p.width = a.width; p.height = a.height; });
+  const label = FORMAT_OF[id] ? `${FORMAT_OF[id] === 'short' ? '숏폼' : '롱폼'} (${a.label})` : a.label;
+  mutate(FORMAT_OF[id] ? `${label}으로 변경` : '화면 비율 변경', (p) => {
+    p.aspect = id;
+    p.width = a.width;
+    p.height = a.height;
+    if (!auto) p.formatChosen = true;
+    // 자막 위치를 형식에 맞게 (숏폼은 아래쪽이 버튼·설명에 가려짐)
+    for (const c of p.clips) if (c.type === 'text' && c.text.role) fitSubtitleToFormat(c.text, p);
+  });
   const vis = project().clips.some((c) => (c.type === 'video' || c.type === 'image') && c.fit !== 'cover');
-  toast(auto ? `영상에 맞춰 화면 비율을 ${a.label}로 정했어요` : `화면 비율: ${a.label}`, vis && !auto ? { action: { label: '영상 꽉 채우기', run: () => fitAll('cover') } } : {});
+  toast(auto ? `영상에 맞춰 ${label}로 정했어요` : `${label}로 바꿨어요`, vis && !auto ? { action: { label: '영상 꽉 채우기', run: () => fitAll('cover') } } : {});
 }
 
-// ---------- 가이드 (쉬운 모드) ----------
+// ---------- 롱폼 / 숏폼 ----------
+
+const FORMAT_OF = { '16:9': 'long', '9:16': 'short' };
+const formatBtns = document.querySelectorAll('[data-format]');
+for (const b of formatBtns) {
+  b.addEventListener('click', () => {
+    const id = b.dataset.format === 'short' ? '9:16' : '16:9';
+    if (project().aspect === id) return;
+    setAspect(id);
+  });
+}
+function renderFormat() {
+  const f = FORMAT_OF[project().aspect];
+  for (const b of formatBtns) b.setAttribute('aria-pressed', b.dataset.format === f ? 'true' : 'false');
+}
+on('project', renderFormat);
+
+// ---------- 가이드 (심플 모드) ----------
 
 const STEPS = [
   { id: 'import', label: '불러오기', tip: '왼쪽 <b>미디어</b>에 영상·사진을 끌어다 놓으세요. 순서대로 타임라인에 붙어요.', tab: 'media',
@@ -532,7 +558,7 @@ function renderGuide() {
       class: `${s.done(p) ? 'done' : ''} ${i === cur ? 'current' : ''}`,
     }, h('button', { onclick: () => { if (s.tab) setLeftTab(s.tab); else $('#export-btn').click(); showTip(s); } },
       h('span', { class: 'step-n' }, s.done(p) ? '✓' : i + 1), s.label)))),
-    h('div', { class: 'guide-tip', html: cur >= 0 ? `💡 ${STEPS[cur].tip}` : '🎉 모든 단계를 마쳤어요! 더 다듬고 싶다면 전문가 모드도 써보세요.' }),
+    h('div', { class: 'guide-tip', html: cur >= 0 ? `💡 ${STEPS[cur].tip}` : '🎉 모든 단계를 마쳤어요! 더 다듬고 싶다면 전문가 모드도 써 보세요.' }),
   );
 }
 function showTip(s) { guide.querySelector('.guide-tip').innerHTML = `💡 ${s.tip}`; }
@@ -653,6 +679,7 @@ async function boot() {
   }
   renderMedia();
   renderGuide();
+  renderFormat();
   updateTime();
   fitCanvas();
   emit('zoom');
@@ -666,9 +693,9 @@ function welcome() {
     h('p', {}, '누구나 쉽게, 그러나 제대로. 편집 경험에 맞춰 시작해 보세요. 언제든 오른쪽 위에서 바꿀 수 있어요.'),
     h('div', { class: 'welcome-cards' },
       h('button', { class: 'welcome-card', onclick: () => pick('easy') },
-        h('span', { class: 'wc-icon' }, '🌱'), h('b', {}, '쉬운 모드'), h('span', { class: 'muted small' }, '편집이 처음이에요. 단계별 안내와 자동 기능으로 빠르게 완성할래요.')),
+        h('span', { class: 'wc-icon' }, '🌱'), h('b', {}, '심플'), h('span', { class: 'muted small' }, '편집이 처음이에요. 단계별 안내와 자동 기능으로 빠르게 완성할래요.')),
       h('button', { class: 'welcome-card', onclick: () => pick('pro') },
-        h('span', { class: 'wc-icon' }, '🎛'), h('b', {}, '전문가 모드'), h('span', { class: 'muted small' }, '편집해 봤어요. 단축키, 세부 수치, 타임코드를 쓰고 싶어요.'))),
+        h('span', { class: 'wc-icon' }, '🎛'), h('b', {}, '전문가'), h('span', { class: 'muted small' }, '편집해 봤어요. 단축키, 세부 수치, 타임코드를 쓰고 싶어요.'))),
     h('p', { class: 'muted small' }, '🔒 모든 작업은 내 컴퓨터 브라우저 안에서만 처리되고, 어디에도 업로드되지 않아요.'),
   ), { onClose: () => saveNow() });
 }

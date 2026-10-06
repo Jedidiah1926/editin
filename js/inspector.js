@@ -1,4 +1,4 @@
-// 속성 패널: 쉬운 모드는 카드형 프리셋 위주, 전문가 모드는 세부 수치까지
+// 속성 패널: 심플 모드는 카드형 프리셋 위주, 전문가 모드는 세부 수치까지
 
 import {
   state, project, on, emit, mutate, beginGesture, mutateLive, endGesture, selectedClips, mediaById, mediaRuntime,

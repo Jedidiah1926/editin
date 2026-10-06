@@ -57,6 +57,8 @@ export function addMediaClip(mediaId, opts = {}) {
     if (m.type === 'image') c.motion = state.mode === 'easy' ? 'zoomIn' : 'none';
     const pa = p.width / p.height;
     if (m.width && m.height && Math.abs(m.width / m.height - pa) < 0.08) c.fit = 'cover';
+    // 심플 모드 숏폼: 가로 영상도 세로 화면을 꽉 채우게 (가운데 기준으로 잘림)
+    if (state.mode === 'easy' && p.height > p.width && m.width > m.height && m.type !== 'audio') c.fit = 'cover';
     const tr = opts.trackId ? trackFor(kind, opts.trackId) : trackFor(kind);
     let start;
     if (opts.at != null) start = opts.at;

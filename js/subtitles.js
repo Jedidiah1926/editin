@@ -301,6 +301,29 @@ export function detectHighlights(cues, rules) {
 
 // ---------- 디자인 적용 ----------
 
+const SHORT_SUB_Y = 0.72;
+
+/**
+ * 숏폼(세로)에서는 화면 아래쪽이 좋아요·댓글 버튼과 설명에 가려지므로 자막을 조금 올림.
+ * 롱폼으로 돌아가면 스타일 기본 위치로 되돌림.
+ */
+export function fitSubtitleToFormat(text, p = project()) {
+  const vertical = p.height > p.width;
+  if (vertical && text.y > SHORT_SUB_Y + 0.02) { text.y = SHORT_SUB_Y; text.shortLifted = true; }
+  else if (!vertical && text.shortLifted) {
+    const pos = { ...text };
+    applyRef(pos, text.ref || `style:${text.style}`);
+    text.y = pos.y;
+    delete text.shortLifted;
+  }
+}
+
+function applyRole(text, th) {
+  applyRef(text, text.role === 'highlight' ? th.highlight : th.normal);
+  delete text.shortLifted;
+  fitSubtitleToFormat(text);
+}
+
 /** 자막 디자인(일반/강조)을 역할(role)이 있는 모든 자막에 다시 적용 */
 export function applyTheme(label = '자막 디자인 적용') {
   let n = 0;
@@ -308,7 +331,7 @@ export function applyTheme(label = '자막 디자인 적용') {
     const th = p.subtitleTheme;
     for (const c of p.clips) {
       if (c.type !== 'text' || !c.text.role) continue;
-      applyRef(c.text, c.text.role === 'highlight' ? th.highlight : th.normal);
+      applyRole(c.text, th);
       n++;
     }
   });
@@ -327,7 +350,7 @@ export function reclassify() {
       if (!roleById.has(c.id)) continue;
       c.text.role = roleById.get(c.id);
       if (c.text.role === 'highlight') hl++;
-      applyRef(c.text, c.text.role === 'highlight' ? th.highlight : th.normal);
+      applyRole(c.text, th);
     }
   });
   return { total: subs.length, highlights: hl };
@@ -339,7 +362,7 @@ export function setClipRole(ids, role) {
     for (const c of p.clips) {
       if (!ids.includes(c.id) || c.type !== 'text') continue;
       c.text.role = role;
-      applyRef(c.text, role === 'highlight' ? th.highlight : th.normal);
+      applyRole(c.text, th);
     }
   });
 }
@@ -377,7 +400,7 @@ export function addCues(cues, { label, auto = false, replaceRange = null }) {
         start: q.start, dur: Math.max(0.2, q.end - q.start), trackId: tr.id,
         text: { content: q.text, role, auto, style: 'subtitle', size: 1 },
       });
-      applyRef(c.text, role === 'highlight' ? th.highlight : th.normal);
+      applyRole(c.text, th);
       p.clips.push(c);
     });
     // 같은 트랙 안에서 겹치지 않게

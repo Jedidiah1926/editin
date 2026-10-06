@@ -539,3 +539,6 @@ body[data-mode='easy'] .tl-toolbar .tool { font-size: 13.5px; padding: 6px 11px;
 @media (max-width: 820px) { .tpl-grid, .photo-compare { grid-template-columns: 1fr; } }
 .ctl-group { display: flex; flex-direction: column; gap: 10px; }
 .check input[type='color'] { width: 30px; height: 30px; margin-top: 0; }
+.fmt-icon { display: inline-block; border: 1.5px solid currentColor; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.fmt-long { width: 14px; height: 9px; }
+.fmt-short { width: 8px; height: 13px; vertical-align: -3px; }
