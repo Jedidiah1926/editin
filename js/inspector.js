@@ -11,6 +11,8 @@ import { listTemplates, applyRef, templateFromText } from './templates.js';
 import { previewDataURL } from './textrender.js';
 import { textForRef } from './subtitle-ui.js';
 import { setClipRole } from './subtitles.js';
+import { isCropMode, toggleCrop, applyCropRatio, removeBlackBars } from './transform-ui.js';
+import { hasCrop as hasCropFn } from './geometry.js';
 import { silenceCut, normalizeLoudness, autoEnhance } from './smart.js';
 
 const SRC = 'inspector';
@@ -29,6 +31,7 @@ export class Inspector {
     });
     on('media-analyzed', () => this.render());
     on('templates', () => this.render());
+    on('cropmode', () => this.render());
     on('clip-dblclick', () => setTimeout(() => this.root.querySelector('textarea')?.focus(), 30));
     this.render();
   }
@@ -263,21 +266,52 @@ export class Inspector {
         this.slider('색온도', { min: -100, max: 100, get: (x) => x.color.temperature, set: (x, v) => { x.color.temperature = v; }, fmt: (v) => (v > 0 ? `따뜻 ${v}` : v < 0 ? `차갑게 ${-v}` : '0'), reset: 0 }),
         this.slider('비네팅', { min: 0, max: 100, get: (x) => x.color.vignette, set: (x, v) => { x.color.vignette = v; }, reset: 0 }),
       ),
-      this.section('frame', '화면',
+      this.section('frame', '화면 · 크기 · 자르기',
         h('div', { class: 'ctl' }, h('label', {}, '맞춤'),
           this.seg([['contain', '전체 보이기'], ['cover', '꽉 채우기']], c.fit, (v) => this.setAll('화면 맞춤 변경', (x) => { x.fit = v; }))),
         this.slider('크기', { min: 10, max: 400, get: (x) => Math.round(x.transform.scale * 100), set: (x, v) => { x.transform.scale = v / 100; }, fmt: (v) => `${v}%`, reset: 100 }),
-        pro ? this.slider('X 위치', { min: -100, max: 100, get: (x) => Math.round(x.transform.x * 100), set: (x, v) => { x.transform.x = v / 100; }, reset: 0 }) : null,
-        pro ? this.slider('Y 위치', { min: -100, max: 100, get: (x) => Math.round(x.transform.y * 100), set: (x, v) => { x.transform.y = v / 100; }, reset: 0 }) : null,
+        this.slider('좌우 위치', { min: -100, max: 100, get: (x) => Math.round(x.transform.x * 100), set: (x, v) => { x.transform.x = v / 100; }, fmt: (v) => (v === 0 ? '가운데' : v > 0 ? `오른쪽 ${v}` : `왼쪽 ${-v}`), reset: 0 }),
+        this.slider('상하 위치', { min: -100, max: 100, get: (x) => Math.round(x.transform.y * 100), set: (x, v) => { x.transform.y = v / 100; }, fmt: (v) => (v === 0 ? '가운데' : v > 0 ? `아래 ${v}` : `위 ${-v}`), reset: 0 }),
         pro ? this.slider('회전', { min: -180, max: 180, get: (x) => x.transform.rotation, set: (x, v) => { x.transform.rotation = v; }, fmt: (v) => `${v}°`, reset: 0 }) : null,
         this.slider('불투명도', { min: 0, max: 100, get: (x) => Math.round(x.transform.opacity * 100), set: (x, v) => { x.transform.opacity = v / 100; }, fmt: (v) => `${v}%`, reset: 100 }),
-        h('div', { class: 'muted small' }, '미리보기에서 끌어서 위치를, 휠로 크기를 바꿀 수 있어요'),
+        h('div', { class: 'muted small' }, '미리보기에서 영상을 끌면 위치가, 모서리 ■를 끌면 크기가 바뀌어요'),
+        this.cropControls(c),
       ),
       this.section('motion', '움직임', this.cards(MOTIONS, c.motion, (id) => this.setAll('움직임 효과 변경', (x) => { x.motion = id; }), { cls: 'small-cards' })),
       this.section('trans', '들어올 때 전환',
         this.cards(TRANSITIONS, c.transition.type, (id) => this.setAll('전환 효과 변경', (x) => { x.transition = { type: id, dur: Math.min(x.transition.dur || 0.5, x.dur / 2) }; }), { cls: 'small-cards' }),
         c.transition.type !== 'none' ? this.slider('전환 길이', { min: 0.1, max: 2, step: 0.1, get: (x) => x.transition.dur, set: (x, v) => { x.transition.dur = Math.min(v, x.dur); }, fmt: (v) => `${(+v).toFixed(1)}초` }) : null,
       ),
+    );
+  }
+
+  cropControls(c) {
+    const pro = state.mode === 'pro';
+    const k = c.crop || { l: 0, t: 0, r: 0, b: 0 };
+    const cropping = isCropMode();
+    const ratioNow = c.cropFit && c.crop ? 'ratio' : (hasCropFn(c) ? 'free' : 'none');
+    const ids = selectedClips().map((x) => x.id);
+    const ratios = [[null, '원본'], [16 / 9, '16:9'], [9 / 16, '9:16'], [1, '1:1'], [4 / 5, '4:5']];
+    const cropSlider = (label, key) => this.slider(label, {
+      min: 0, max: 45, get: (x) => Math.round((x.crop?.[key] || 0) * 100),
+      set: (x, v) => {
+        if (!x.crop) x.crop = { l: 0, t: 0, r: 0, b: 0 };
+        x.crop[key] = Math.min(v / 100, 0.95 - (key === 'l' ? x.crop.r : key === 'r' ? x.crop.l : key === 't' ? x.crop.b : x.crop.t));
+      },
+      fmt: (v) => `${v}%`, reset: 0, label2: '화면 자르기',
+    });
+    return h('div', { class: 'crop-ctl' },
+      h('div', { class: 'ctl-top' }, h('label', {}, h('b', {}, '✂ 화면 자르기')),
+        h('span', { class: 'muted small' }, ratioNow === 'none' ? '자르지 않음' : `위 ${Math.round(k.t * 100)} · 아래 ${Math.round(k.b * 100)} · 왼쪽 ${Math.round(k.l * 100)} · 오른쪽 ${Math.round(k.r * 100)}%`)),
+      h('div', { class: 'btn-row' },
+        h('button', { class: `btn small ${cropping ? 'primary' : ''}`, onclick: () => { toggleCrop(); this.render(); } }, cropping ? '자르기 완료' : '가장자리 끌어서 자르기'),
+        h('button', { class: 'btn small', onclick: () => { if (removeBlackBars(c.id)) this.render(); } }, '⬛ 검은 여백 지우기')),
+      h('div', { class: 'ctl' }, h('label', {}, '비율로 자르기 (가운데 기준)'),
+        h('div', { class: 'seg' }, ratios.map(([r, label]) => h('button', {
+          class: (r === null ? !hasCropFn(c) : c.cropRatio && Math.abs(c.cropRatio - r) < 0.001) ? 'active' : '',
+          onclick: () => { applyCropRatio(ids, r, r ? `${label}로 자르기` : '자르기 해제'); this.render(); },
+        }, label)))),
+      pro ? h('div', { class: 'ctl-group' }, cropSlider('위', 't'), cropSlider('아래', 'b'), cropSlider('왼쪽', 'l'), cropSlider('오른쪽', 'r')) : null,
     );
   }
 

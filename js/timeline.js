@@ -104,7 +104,7 @@ export class Timeline {
       this.lanes.append(lane);
     }
     this.headsInner.append(h('div', { class: 'tl-add-track' },
-      h('button', { class: 'btn ghost small', onclick: (e) => this.addTrackMenu(e) }, '+ 트랙 추가')));
+      h('button', { class: 'btn ghost small', onclick: (e) => this.addTrackMenu(e) }, '+ 레이어 추가')));
     // 마커
     for (const mk of p.markers) {
       const m = h('div', { class: 'tl-marker', style: { left: `${this.x(mk.t)}px` }, title: mk.label || '마커 (더블클릭: 이름, 우클릭: 삭제)' }, mk.label ? h('span', {}, mk.label) : null);
@@ -157,32 +157,75 @@ export class Timeline {
       h('span', { class: 'th-icon' }, icon),
       h('span', { class: 'th-name', title: '더블클릭하여 이름 변경' }, tr.name),
       h('span', { class: 'th-btns' },
-        tr.magnetic ? h('span', { class: 'th-magnet', title: '자석 트랙: 클립이 빈틈없이 자동으로 붙어요' }, '🧲') : null,
-        tr.kind !== 'audio' ? btn(tr.hidden, tr.hidden ? '🙈' : '👁', tr.hidden ? '보이기' : '숨기기', toggle('hidden', '트랙 표시 전환')) : null,
-        tr.kind !== 'text' ? btn(tr.muted, tr.muted ? '🔇' : '🔊', tr.muted ? '소리 켜기' : '음소거', toggle('muted', '트랙 음소거 전환')) : null,
-        btn(tr.locked, tr.locked ? '🔒' : '🔓', tr.locked ? '잠금 해제' : '잠그기 (실수로 수정 방지)', toggle('locked', '트랙 잠금 전환')),
+        tr.magnetic ? h('span', { class: 'th-magnet', title: '자석 레이어: 클립이 빈틈없이 자동으로 붙어요' }, '🧲') : null,
+        tr.kind !== 'audio' ? btn(tr.hidden, tr.hidden ? '🙈' : '👁', tr.hidden ? '보이기' : '숨기기', toggle('hidden', '레이어 표시 전환')) : null,
+        tr.kind !== 'text' ? btn(tr.muted, tr.muted ? '🔇' : '🔊', tr.muted ? '소리 켜기' : '음소거', toggle('muted', '레이어 음소거 전환')) : null,
+        btn(tr.locked, tr.locked ? '🔒' : '🔓', tr.locked ? '잠금 해제' : '잠그기 (실수로 수정 방지)', toggle('locked', '레이어 잠금 전환')),
+        h('button', { class: 'th-btn th-more', title: '레이어 메뉴', 'aria-label': `${tr.name} 레이어 메뉴`, onclick: (e) => this.trackMenu(tr, e) }, '⋯'),
       ),
     );
-    head.querySelector('.th-name').addEventListener('dblclick', () => {
-      const name = prompt('트랙 이름', tr.name);
-      if (name) mutate('트랙 이름 변경', () => { tr.name = name; });
-    });
-    head.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      const empty = !project().clips.some((c) => c.trackId === tr.id);
-      const base = ['t1', 'v1', 'a1'].includes(tr.id);
-      if (base) { toast('기본 트랙은 삭제할 수 없어요'); return; }
-      if (!empty) { toast('클립이 있는 트랙은 삭제할 수 없어요. 먼저 클립을 지워주세요.'); return; }
-      mutate('트랙 삭제', (p) => { p.tracks = p.tracks.filter((x) => x.id !== tr.id); });
-    });
+    head.querySelector('.th-name').addEventListener('dblclick', () => this.renameTrack(tr));
+    head.addEventListener('contextmenu', (e) => { e.preventDefault(); this.trackMenu(tr, e); });
     return head;
+  }
+
+  renameTrack(tr) {
+    const name = prompt('레이어 이름', tr.name);
+    if (name) mutate('레이어 이름 변경', (p) => { p.tracks.find((x) => x.id === tr.id).name = name; });
+  }
+
+  /** 같은 종류 레이어끼리 순서 바꾸기 (영상은 위에 있을수록 화면 앞쪽) */
+  moveTrack(tr, dir) {
+    const p = project();
+    const i = p.tracks.findIndex((x) => x.id === tr.id);
+    const j = i + dir;
+    if (j < 0 || j >= p.tracks.length || p.tracks[j].kind !== tr.kind) return false;
+    mutate(dir < 0 ? '레이어 위로' : '레이어 아래로', (pp) => {
+      const a = pp.tracks.findIndex((x) => x.id === tr.id);
+      [pp.tracks[a], pp.tracks[a + dir]] = [pp.tracks[a + dir], pp.tracks[a]];
+    });
+    return true;
+  }
+
+  trackMenu(tr, e) {
+    const p = project();
+    const i = p.tracks.findIndex((x) => x.id === tr.id);
+    const n = p.clips.filter((c) => c.trackId === tr.id).length;
+    const base = ['t1', 'v1', 'a1'].includes(tr.id);
+    const canUp = i > 0 && p.tracks[i - 1].kind === tr.kind;
+    const canDown = i < p.tracks.length - 1 && p.tracks[i + 1].kind === tr.kind;
+    const kindName = { video: '영상', text: '자막', audio: '오디오' }[tr.kind];
+    this.actions.menu?.(e.clientX, e.clientY, [
+      { label: '✏️ 이름 바꾸기', run: () => this.renameTrack(tr) },
+      { label: tr.kind === 'video' ? '⬆ 위로 (화면 앞쪽으로)' : '⬆ 위로', disabled: !canUp, run: () => this.moveTrack(tr, -1) },
+      { label: tr.kind === 'video' ? '⬇ 아래로 (화면 뒤쪽으로)' : '⬇ 아래로', disabled: !canDown, run: () => this.moveTrack(tr, 1) },
+      { label: `+ ${kindName} 레이어 추가`, run: () => this.addLayer(tr.kind) },
+      '-',
+      {
+        label: base ? '기본 레이어는 삭제할 수 없어요' : n ? `🗑 레이어 삭제 (클립 ${n}개 포함)` : '🗑 레이어 삭제',
+        danger: !base, disabled: base,
+        run: () => {
+          mutate('레이어 삭제', (pp) => {
+            pp.tracks = pp.tracks.filter((x) => x.id !== tr.id);
+            pp.clips = pp.clips.filter((c) => c.trackId !== tr.id);
+          });
+          toast(n ? `레이어와 클립 ${n}개를 삭제했어요 (${'Ctrl'}+Z로 되돌리기)` : '레이어를 삭제했어요');
+        },
+      },
+    ]);
+  }
+
+  addLayer(kind) {
+    let t = null;
+    mutate('레이어 추가', (p) => { t = addTrack(p, kind); });
+    toast(`'${t.name}' 레이어를 추가했어요${kind === 'video' ? ' · 위쪽 레이어일수록 화면 앞에 보여요' : ''}`);
   }
 
   addTrackMenu(e) {
     this.actions.menu?.(e.clientX, e.clientY, [
-      { label: '🎞 영상 트랙', run: () => mutate('트랙 추가', (p) => addTrack(p, 'video')) },
-      { label: 'T 자막 트랙', run: () => mutate('트랙 추가', (p) => addTrack(p, 'text')) },
-      { label: '♪ 오디오 트랙', run: () => mutate('트랙 추가', (p) => addTrack(p, 'audio')) },
+      { label: '🎞 영상 레이어 (오버레이 · 화면 속 화면)', run: () => this.addLayer('video') },
+      { label: 'T 자막 레이어', run: () => this.addLayer('text') },
+      { label: '♪ 오디오 레이어 (음악 · 효과음)', run: () => this.addLayer('audio') },
     ]);
   }
 
@@ -429,7 +472,7 @@ export class Timeline {
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     if (additive) setSelection([c.id], true);
     else if (!state.selection.has(c.id)) setSelection([c.id]);
-    if (tr?.locked) { toast('잠긴 트랙이에요. 🔒을 눌러 잠금을 풀어주세요.'); return; }
+    if (tr?.locked) { toast('잠긴 레이어예요. 🔒을 눌러 잠금을 풀어 주세요.'); return; }
     if (e.target.classList.contains('h-l')) this.startTrim(e, c, 'l');
     else if (e.target.classList.contains('h-r')) this.startTrim(e, c, 'r');
     else if (!additive) this.startMove(e, c);
@@ -497,7 +540,7 @@ export class Timeline {
               let free = p.tracks.find((t) => t.kind === tr.kind && !t.magnetic && !t.locked && !p.clips.some((o) => o.trackId === t.id && o.id !== x.id && o.start < clipEnd(x) - 1e-3 && clipEnd(o) > x.start + 1e-3));
               if (!free) free = addTrack(p, tr.kind);
               x.trackId = free.id;
-              toast(`겹치지 않도록 '${free.name}' 트랙으로 옮겼어요`);
+              toast(`겹치지 않도록 '${free.name}' 레이어로 옮겼어요`);
             }
           }
         }

@@ -16,6 +16,7 @@ import {
   silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, runChecks,
 } from './smart.js';
 import { initSubtitleUI } from './subtitle-ui.js';
+import { initTransformUI, toggleCrop, setCropMode, isCropMode } from './transform-ui.js';
 import { fitSubtitleToFormat } from './subtitles.js';
 import { loadTemplates } from './templates.js';
 import { openExport } from './export.js';
@@ -125,6 +126,7 @@ on('mode', updateTime);
 
 // 미리보기 크기 맞추기
 const stage = $('#stage');
+initTransformUI({ stage, canvas, engine });
 function fitCanvas() {
   const p = project();
   const r = stage.getBoundingClientRect();
@@ -155,7 +157,6 @@ canvas.addEventListener('pointerdown', (e) => {
   const c = clipById(hit.id);
   if (!c || trackById(c.trackId)?.locked) return;
   setSelection([c.id]);
-  if (engine.playing) return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
   const W = canvas.width;
@@ -190,7 +191,9 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('dblclick', () => {
   const sel = selectedClips();
-  if (sel.length === 1 && sel[0].type === 'text') emit('clip-dblclick', sel[0].id);
+  if (sel.length !== 1) return;
+  if (sel[0].type === 'text') emit('clip-dblclick', sel[0].id);
+  else if (sel[0].type === 'video' || sel[0].type === 'image') toggleCrop();
 });
 let wheelTimer;
 canvas.addEventListener('wheel', (e) => {
@@ -221,6 +224,7 @@ $('#tb-trim-start').onclick = () => { if (!trimToPlayhead('start')) toast('재�
 $('#tb-trim-end').onclick = () => { if (!trimToPlayhead('end')) toast('재생 위치에 클립이 없어요'); };
 $('#tb-text').onclick = () => addTextClip(state.mode === 'easy' ? 'subtitle' : 'subtitle');
 $('#tb-marker').onclick = () => addMarker(state.time);
+$('#tb-layer').onclick = (e) => timeline.addTrackMenu(e);
 $('#tb-snap').onclick = () => toggleSnap();
 $('#tb-fit').onclick = () => timeline.zoomToFit();
 const zoomRange = $('#tb-zoom');
@@ -569,7 +573,7 @@ on('project', ({ live } = {}) => { if (!live) renderGuide(); });
 const SHORTCUTS = [
   ['재생', [['Space', '재생 / 일시정지'], ['J / K / L', '뒤로 / 정지 / 앞으로 (여러 번: 빠르게)'], ['← / →', '1프레임 이동'], ['Shift + ← / →', '1초 이동'], ['↑ / ↓', '이전 / 다음 편집점'], ['Home / End', '처음 / 끝']]],
   ['편집', [['S', '재생 위치에서 자르기'], ['Q / W', '재생 위치 앞 / 뒤 잘라내기'], ['Delete', '삭제'], ['Shift + Delete', '삭제 후 빈틈 당기기'], [`${modKey} + D`, '복제'], [`${modKey} + C / V`, '복사 / 붙여넣기'], [`${modKey} + A`, '모두 선택'], ['T', '자막 추가']]],
-  ['보기·기타', [[`${modKey} + Z`, '실행 취소'], [`${modKey} + Shift + Z`, '다시 실행'], ['+ / -', '타임라인 확대 / 축소'], ['Shift + Z', '전체 보기'], ['N', '자석 맞춤 켜기/끄기'], ['I / O / X', '구간 시작 / 끝 / 해제'], ['M', '마커 추가'], [`${modKey} + E`, '내보내기'], ['?', '이 도움말']]],
+  ['보기·기타', [[`${modKey} + Z`, '실행 취소'], [`${modKey} + Shift + Z`, '다시 실행'], ['+ / -', '타임라인 확대 / 축소'], ['Shift + Z', '전체 보기'], ['N', '자석 맞춤 켜기/끄기'], ['I / O / X', '구간 시작 / 끝 / 해제'], ['M', '마커 추가'], [`${modKey} + E`, '내보내기'], ['C', '화면 자르기 (크롭)'], ['?', '이 도움말']]],
 ];
 function showShortcuts() {
   modal('단축키', h('div', { class: 'shortcuts' }, SHORTCUTS.map(([g, list]) => h('div', {},
@@ -611,7 +615,8 @@ document.addEventListener('keydown', (e) => {
     case 'End': handled(); engine.seek(projectDuration()); return;
     case 'Delete':
     case 'Backspace': handled(); deleteSelected(e.shiftKey); return;
-    case 'Escape': setSelection([]); return;
+    case 'Escape': if (isCropMode()) setCropMode(false); else setSelection([]); return;
+    case 'Enter': if (isCropMode()) { setCropMode(false); handled(); } return;
     case '?': showShortcuts(); return;
     case '+':
     case '=': timeline.setZoom(state.zoom * 1.4); return;
@@ -631,6 +636,7 @@ document.addEventListener('keydown', (e) => {
     case 'x': state.inPoint = null; state.outPoint = null; emit('io'); break;
     case 'm': addMarker(state.time); break;
     case 'n': toggleSnap(); break;
+    case 'c': toggleCrop(); break;
     case 't': addTextClip('subtitle'); break;
     case 'z': if (e.shiftKey) timeline.zoomToFit(); break;
     default: return;

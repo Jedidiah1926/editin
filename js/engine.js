@@ -6,6 +6,7 @@ import {
 import { filterById } from './presets.js';
 import { clamp, ease } from './ui.js';
 import { renderText, fadeFactor } from './textrender.js';
+import { visualLayout, hasCrop } from './geometry.js';
 
 export { fadeFactor };
 
@@ -27,6 +28,7 @@ export class Engine {
     this.stopAt = null;
     this.exporting = false;
     this.overlay = { safe: false };
+    this.cropGhostId = null;
     this.hidden = h0();
     document.body.append(this.hidden);
 
@@ -390,53 +392,41 @@ export class Engine {
     const ctx = this.ctx;
     const local = clamp(t - c.start, 0, c.dur);
     const tf = c.transform;
-    const base = c.fit === 'cover' ? Math.max(W / sw, H / sh) : Math.min(W / sw, H / sh);
-    let w = sw * base;
-    let h = sh * base;
-    let mx = 0;
-    let my = 0;
-    let ms = 1;
-    const mp = c.dur > 0 ? local / c.dur : 0;
-    switch (c.motion) {
-      case 'zoomIn': ms = 1 + 0.15 * ease(mp); break;
-      case 'zoomOut': ms = 1.15 - 0.15 * ease(mp); break;
-      case 'panLeft': ms = 1.15; mx = (0.06 - 0.12 * ease(mp)) * W; break;
-      case 'panRight': ms = 1.15; mx = (-0.06 + 0.12 * ease(mp)) * W; break;
-      default: break;
-    }
-    const s = tf.scale * ms * (o.scale || 1);
-    w *= s;
-    h *= s;
-    const cx = W / 2 + tf.x * W + mx + (o.dx || 0);
-    const cy = H / 2 + tf.y * H + my;
+    const L = visualLayout(c, W, H, sw, sh, local, o);
     const alpha = tf.opacity * (o.frozen ? 1 : fadeFactor(c, local)) * (o.alpha ?? 1);
     if (alpha <= 0.001) return;
+    const v = L.vis;
     ctx.save();
+    ctx.translate(L.ax, L.ay);
+    if (L.rot) ctx.rotate((L.rot * Math.PI) / 180);
+    // 화면 자르기 중: 잘려 나갈 부분을 흐리게 보여줌
+    if (this.cropGhostId === c.id && !this.exporting && hasCrop(c)) {
+      ctx.globalAlpha = 0.28;
+      ctx.drawImage(src, v.x - L.src.x * L.s, v.y - L.src.y * L.s, L.fullW, L.fullH);
+    }
     ctx.globalAlpha = alpha;
-    ctx.translate(cx, cy);
-    if (tf.rotation) ctx.rotate((tf.rotation * Math.PI) / 180);
     const f = buildFilter(c.color);
     if (f) ctx.filter = f;
-    ctx.drawImage(src, -w / 2, -h / 2, w, h);
+    ctx.drawImage(src, L.src.x, L.src.y, L.src.w, L.src.h, v.x, v.y, v.w, v.h);
     ctx.filter = 'none';
     const col = c.color;
     if (col.temperature) {
       ctx.globalCompositeOperation = 'soft-light';
       const a = Math.abs(col.temperature) / 100 * 0.55;
       ctx.fillStyle = col.temperature > 0 ? `rgba(255,140,30,${a})` : `rgba(30,120,255,${a})`;
-      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.fillRect(v.x, v.y, v.w, v.h);
       ctx.globalCompositeOperation = 'source-over';
     }
     if (col.vignette) {
-      const r = Math.hypot(w, h) / 2;
-      const g = ctx.createRadialGradient(0, 0, r * 0.35, 0, 0, r);
+      const r = Math.hypot(v.w, v.h) / 2;
+      const g = ctx.createRadialGradient(v.x + v.w / 2, v.y + v.h / 2, r * 0.35, v.x + v.w / 2, v.y + v.h / 2, r);
       g.addColorStop(0, 'rgba(0,0,0,0)');
       g.addColorStop(1, `rgba(0,0,0,${(col.vignette / 100) * 0.85})`);
       ctx.fillStyle = g;
-      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.fillRect(v.x, v.y, v.w, v.h);
     }
     ctx.restore();
-    if (!o.frozen) this.bounds.push({ id: c.id, cx, cy, w, h, rot: tf.rotation || 0, kind: 'visual' });
+    if (!o.frozen) this.bounds.push({ id: c.id, cx: L.cx, cy: L.cy, w: v.w, h: v.h, rot: L.rot, kind: 'visual', sw, sh });
   }
 
   drawText(c, t, W, H, o = {}) {
@@ -459,18 +449,6 @@ export class Engine {
       ctx.moveTo(0, H / 3); ctx.lineTo(W, H / 3);
       ctx.moveTo(0, (2 * H) / 3); ctx.lineTo(W, (2 * H) / 3);
       ctx.stroke();
-      ctx.restore();
-    }
-    // 선택된 클립 외곽선
-    for (const b of this.bounds) {
-      if (!state.selection.has(b.id)) continue;
-      ctx.save();
-      ctx.translate(b.cx, b.cy);
-      ctx.rotate((b.rot * Math.PI) / 180);
-      ctx.strokeStyle = '#6c8cff';
-      ctx.lineWidth = Math.max(2, W / 600);
-      ctx.setLineDash([]);
-      ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
       ctx.restore();
     }
   }
