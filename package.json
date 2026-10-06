@@ -1,0 +1,11 @@
+{
+  "name": "editin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "누구나 쉽게, 그러나 제대로 하는 브라우저 영상 편집기",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "lint": "npx --yes eslint js/"
+  }
+}

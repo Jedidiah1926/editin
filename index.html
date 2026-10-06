@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>editin — 쉬운 영상 편집기</title>
+  <meta name="description" content="편집이 처음이어도 쉽게, 전문가도 빠르게. 브라우저에서 바로 쓰는 영상 편집기.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%235b7cff'/><path d='M12 9l12 7-12 7z' fill='white'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Black+Han+Sans&family=Nanum+Myeongjo:wght@800&family=Do+Hyeon&family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body data-mode="easy">
+  <header class="topbar">
+    <div class="brand"><span class="logo">▶</span> editin</div>
+    <input id="project-name" class="project-name" value="제목 없는 프로젝트" aria-label="프로젝트 이름" spellcheck="false">
+    <span id="save-state" class="save-state">✓ 자동 저장됨</span>
+    <div class="spacer"></div>
+    <div class="history">
+      <button id="undo" class="icon-btn" title="실행 취소" aria-label="실행 취소" disabled>↶</button>
+      <button id="redo" class="icon-btn" title="다시 실행" aria-label="다시 실행" disabled>↷</button>
+    </div>
+    <div class="mode-toggle" role="group" aria-label="편집 모드">
+      <button data-mode="easy" aria-pressed="true" title="안내와 자동 기능 중심">🌱 쉬운 모드</button>
+      <button data-mode="pro" aria-pressed="false" title="단축키·세부 수치·타임코드">🎛 전문가 모드</button>
+    </div>
+    <button id="new-btn" class="btn ghost" title="새 프로젝트">새로 만들기</button>
+    <button id="help-btn" class="icon-btn" title="단축키 (?)" aria-label="단축키 보기">?</button>
+    <button id="export-btn" class="btn primary" title="영상 파일로 저장">내보내기</button>
+  </header>
+
+  <nav id="guide" class="guide easy-only" aria-label="편집 단계 안내"></nav>
+
+  <main class="workspace">
+    <aside class="left panel">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-left-tab="media" aria-selected="true">미디어</button>
+        <button role="tab" data-left-tab="text" aria-selected="false">텍스트</button>
+        <button role="tab" data-left-tab="smart" aria-selected="false">🪄 스마트</button>
+      </div>
+      <section data-left-panel="media" class="panel-body">
+        <button id="import-btn" class="btn primary block">+ 파일 불러오기</button>
+        <div id="media-drop" class="drop-zone" role="button" tabindex="0">
+          <div class="dz-icon">⬇</div>
+          <div><b>영상 · 사진 · 음악</b>을<br>여기로 끌어다 놓으세요</div>
+          <div class="muted small">MP4, MOV, WebM, MP3, WAV, JPG, PNG…</div>
+        </div>
+        <div id="media-list" class="media-list"></div>
+      </section>
+      <section data-left-panel="text" class="panel-body" hidden>
+        <div class="panel-label">스타일을 누르면 재생 위치에 추가돼요</div>
+        <div id="text-styles" class="cards text-cards"></div>
+        <div class="panel-label">대본으로 자막 한 번에 만들기</div>
+        <textarea id="script" class="text-input" rows="5" placeholder="한 줄에 자막 하나씩 붙여넣으세요.&#10;읽기 좋은 길이로 자동으로 이어 붙여요."></textarea>
+        <div class="row">
+          <select id="script-style" class="text-input" aria-label="자막 스타일"></select>
+          <button id="script-add" class="btn primary">자막 만들기</button>
+        </div>
+        <div class="row">
+          <button id="srt-import" class="btn small">SRT 불러오기</button>
+          <button id="srt-export" class="btn small">SRT 저장</button>
+        </div>
+      </section>
+      <section data-left-panel="smart" class="panel-body" hidden>
+        <div class="panel-label">한 번 누르면 알아서 해줘요 · 모두 되돌릴 수 있어요</div>
+        <div id="smart-list" class="smart-list"></div>
+      </section>
+    </aside>
+
+    <section class="center">
+      <div id="stage" class="stage">
+        <canvas id="preview" aria-label="미리보기"></canvas>
+      </div>
+      <div class="transport">
+        <div class="t-left">
+          <span id="time" class="time">00:00.0</span><span class="muted"> / </span><span id="dur" class="time muted">00:00.0</span>
+        </div>
+        <div class="t-center">
+          <button id="to-start" class="icon-btn" title="처음으로 (Home)" aria-label="처음으로">⏮</button>
+          <button id="prev-edit" class="icon-btn" title="이전 편집점 (↑)" aria-label="이전 편집점">⇤</button>
+          <button id="play" class="play-btn" title="재생 (Space)" aria-label="재생/일시정지">▶</button>
+          <button id="next-edit" class="icon-btn" title="다음 편집점 (↓)" aria-label="다음 편집점">⇥</button>
+          <button id="to-end" class="icon-btn" title="끝으로 (End)" aria-label="끝으로">⏭</button>
+        </div>
+        <div class="t-right">
+          <div class="meter" title="소리 크기"><div id="meter-fill" class="meter-fill"></div></div>
+          <button id="safe-btn" class="icon-btn" aria-pressed="false" title="안전 영역 · 3분할 안내선" aria-label="안내선">▦</button>
+          <button id="full-btn" class="icon-btn" title="전체 화면" aria-label="전체 화면">⛶</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right panel">
+      <div id="inspector" class="inspector"></div>
+    </aside>
+  </main>
+
+  <section class="timeline-wrap">
+    <div class="tl-toolbar">
+      <button id="tb-split" class="btn tool" title="재생 위치에서 자르기 (S)"><span>✂️</span> 자르기 <kbd class="pro-only">S</kbd></button>
+      <button id="tb-trim-start" class="btn tool" title="재생 위치 앞부분 잘라내기 (Q)"><span>⇤</span> 앞 잘라내기 <kbd class="pro-only">Q</kbd></button>
+      <button id="tb-trim-end" class="btn tool" title="재생 위치 뒷부분 잘라내기 (W)"><span>⇥</span> 뒤 잘라내기 <kbd class="pro-only">W</kbd></button>
+      <button id="tb-delete" class="btn tool" title="선택 삭제 (Delete)"><span>🗑</span> 삭제</button>
+      <span class="sep"></span>
+      <button id="tb-text" class="btn tool" title="자막 추가 (T)"><span>T</span> 자막</button>
+      <button id="tb-marker" class="btn tool pro-only" title="마커 추가 (M)"><span>◆</span> 마커</button>
+      <div class="spacer"></div>
+      <button id="tb-snap" class="icon-btn" aria-pressed="true" title="자석 맞춤 (N): 클립 끝·재생 위치에 착 붙어요">🧲</button>
+      <button id="tb-fit" class="icon-btn" title="전체 보기 (Shift+Z)" aria-label="전체 보기">⤢</button>
+      <input id="tb-zoom" type="range" min="0" max="100" step="0.5" aria-label="타임라인 확대">
+    </div>
+    <div id="timeline" class="timeline"></div>
+  </section>
+
+  <div class="file-over-hint">여기에 놓으면 불러와요</div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
