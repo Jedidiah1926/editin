@@ -1,10 +1,10 @@
 // 스마트 도구: 무음 자동 컷, 음량 맞추기, 원클릭 보정, 자막 일괄 입력/SRT, 내보내기 전 점검
 
 import {
-  state, project, mutate, mediaRuntime, mediaById, clipEnd, clipsOnTrack, trackById, uid, defaultClip, round,
+  project, mutate, mediaRuntime, mediaById, clipEnd, clipsOnTrack, trackById, uid, round,
 } from './store.js';
 import { textStyleById } from './presets.js';
-import { trackFor } from './ops.js';
+import { readingTime } from './subtitles.js';
 
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
@@ -170,77 +170,12 @@ export function fitAll(fit) {
   });
 }
 
-// ---------- 자막 ----------
-
-/** 글자 수로 읽기 좋은 노출 시간 계산 (한국어 초당 약 7자) */
-export function readingTime(text) {
-  const n = [...text.replace(/\s/g, '')].length;
-  return Math.max(1.2, Math.min(7, 0.6 + n / 7));
-}
-
-export function scriptToSubtitles(script, styleId, startAt) {
-  const lines = script.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return 0;
-  const st = textStyleById(styleId);
-  mutate(`자막 ${lines.length}줄 추가`, (p) => {
-    let t = startAt;
-    const tr = trackFor('text');
-    for (const line of lines) {
-      const dur = readingTime(line);
-      const c = defaultClip('text', { start: round(t), dur: round(dur), trackId: tr.id, text: { content: line, style: st.id, size: 1, x: st.x, y: st.y, anim: st.anim } });
-      // 같은 트랙에 겹치는 자막이 있으면 밀어냄
-      p.clips.push(c);
-      t += dur;
-    }
-    resolveTextOverlaps(p, tr.id);
-  });
-  return lines.length;
-}
-
 function resolveTextOverlaps(p, trackId) {
   const list = p.clips.filter((c) => c.trackId === trackId).sort((a, b) => a.start - b.start);
   for (let i = 1; i < list.length; i++) {
     const prev = list[i - 1];
     if (list[i].start < clipEnd(prev)) list[i].start = round(clipEnd(prev));
   }
-}
-
-function parseTime(s) {
-  const m = s.trim().match(/(\d+):(\d+):(\d+)[,.](\d+)/);
-  if (!m) return 0;
-  return +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000;
-}
-
-export function importSRT(text, styleId = 'subtitle') {
-  const blocks = text.replace(/\r/g, '').split(/\n\n+/);
-  const items = [];
-  for (const b of blocks) {
-    const lines = b.split('\n').filter((l) => l.trim() !== '');
-    const ti = lines.findIndex((l) => l.includes('-->'));
-    if (ti < 0) continue;
-    const [a, z] = lines[ti].split('-->');
-    const content = lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '');
-    if (content) items.push({ start: parseTime(a), end: parseTime(z), content });
-  }
-  if (!items.length) return 0;
-  const st = textStyleById(styleId);
-  mutate(`SRT 자막 ${items.length}개 불러오기`, (p) => {
-    const tr = trackFor('text');
-    for (const it of items) {
-      p.clips.push(defaultClip('text', { start: it.start, dur: Math.max(0.2, it.end - it.start), trackId: tr.id, text: { content: it.content, style: st.id, size: 1, x: st.x, y: st.y, anim: 'none' } }));
-    }
-  });
-  return items.length;
-}
-
-export function exportSRT() {
-  const texts = project().clips.filter((c) => c.type === 'text').sort((a, b) => a.start - b.start);
-  const f = (t) => {
-    const ms = Math.round(t * 1000);
-    const p = (n, l = 2) => String(n).padStart(l, '0');
-    return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)},${p(ms % 1000, 3)}`;
-  };
-  return texts.map((c, i) => `${i + 1}\n${f(c.start)} --> ${f(clipEnd(c))}\n${c.text.content}\n`).join('\n');
 }
 
 // ---------- 내보내기 전 점검 ----------
@@ -358,4 +293,3 @@ export function runChecks() {
   return issues;
 }
 
-export { state };

@@ -44,6 +44,16 @@ export function newProject() {
     ],
     clips: [],
     markers: [],
+    subtitleTheme: defaultSubtitleTheme(),
+  };
+}
+
+/** 자막 디자인: 일반/강조 자막에 쓸 스타일(style:ID 또는 tpl:ID)과 강조 판별 규칙 */
+export function defaultSubtitleTheme() {
+  return {
+    normal: 'style:subtitle',
+    highlight: 'style:variety',
+    rules: { markers: true, loud: true, exclaim: true, keywords: '' },
   };
 }
 
@@ -221,6 +231,7 @@ export function compactTrack(trackId) {
 
 export function normalize() {
   const p = state.project;
+  if (!p.subtitleTheme) p.subtitleTheme = defaultSubtitleTheme();
   for (const c of p.clips) {
     c.start = Math.max(0, round(c.start));
     c.dur = Math.max(0.05, round(c.dur));
@@ -264,10 +275,12 @@ let dbPromise = null;
 function db() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(DB_NAME, 2);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore('files');
-        req.result.createObjectStore('kv');
+        // 'tpl': 자막 템플릿 — 프로젝트를 새로 만들어도 유지됨
+        for (const name of ['files', 'kv', 'tpl']) {
+          if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -289,6 +302,7 @@ async function idb(store, mode, fn) {
 export const idbPut = (store, key, val) => idb(store, 'readwrite', (s) => s.put(val, key)).catch(() => {});
 export const idbGet = (store, key) => idb(store, 'readonly', (s) => s.get(key)).catch(() => undefined);
 export const idbDel = (store, key) => idb(store, 'readwrite', (s) => s.delete(key)).catch(() => {});
+export const idbAll = (store) => idb(store, 'readonly', (s) => s.getAll()).catch(() => []);
 export const idbClear = (store) => idb(store, 'readwrite', (s) => s.clear()).catch(() => {});
 
 let saveTimer = null;

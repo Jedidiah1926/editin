@@ -13,12 +13,13 @@ import {
   addMediaClip, addTextClip, splitAtPlayhead, deleteClips, trimToPlayhead, copyClips, pasteClips, duplicateClips, addMarker,
 } from './ops.js';
 import {
-  silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, scriptToSubtitles,
-  importSRT, exportSRT, runChecks,
+  silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, runChecks,
 } from './smart.js';
+import { initSubtitleUI } from './subtitle-ui.js';
+import { loadTemplates } from './templates.js';
 import { openExport } from './export.js';
 import { TEXT_STYLES, TRANSITIONS } from './presets.js';
-import { h, $, toast, modal, confirmDialog, fmtTime, fmtTimecode, fmtDur, download, modKey, clamp } from './ui.js';
+import { h, $, toast, modal, confirmDialog, fmtTime, fmtTimecode, fmtDur, modKey, clamp } from './ui.js';
 
 // ---------- 레이아웃 ----------
 
@@ -395,32 +396,6 @@ for (const st of TEXT_STYLES) {
     onclick: () => { addTextClip(st.id); toast(`'${st.name}'를 추가했어요. 오른쪽에서 내용을 바꾸세요.`); },
   }, h('span', { class: `text-sample ts-${st.id}` }, st.sample), h('span', { class: 'card-name' }, st.name)));
 }
-const scriptStyle = $('#script-style');
-for (const st of TEXT_STYLES) scriptStyle.append(h('option', { value: st.id }, st.name));
-$('#script-add').onclick = () => {
-  const ta = $('#script');
-  const n = scriptToSubtitles(ta.value, scriptStyle.value, state.time);
-  if (!n) { toast('자막으로 만들 문장을 입력하세요'); return; }
-  ta.value = '';
-  toast(`자막 ${n}개를 만들었어요. 타임라인에서 길이를 맞춰보세요.`);
-};
-$('#script').addEventListener('keydown', (e) => e.stopPropagation());
-const srtInput = h('input', { type: 'file', accept: '.srt,.vtt,text/plain', hidden: true });
-document.body.append(srtInput);
-srtInput.addEventListener('change', async () => {
-  const f = srtInput.files[0];
-  if (!f) return;
-  const n = importSRT(await f.text(), scriptStyle.value);
-  toast(n ? `자막 ${n}개를 불러왔어요` : '자막을 읽을 수 없어요');
-  srtInput.value = '';
-});
-$('#srt-import').onclick = () => srtInput.click();
-$('#srt-export').onclick = () => {
-  const s = exportSRT();
-  if (!s) { toast('내보낼 자막이 없어요'); return; }
-  download(new Blob([s], { type: 'text/plain' }), `${project().name}.srt`);
-};
-
 // 스마트 도구
 const smart = [
   { icon: '✂️', title: '무음 자동 컷', desc: '말이 없는 부분을 찾아 한 번에 잘라내요', run: () => openSilence(mainMediaClips()) },
@@ -539,7 +514,7 @@ const STEPS = [
     done: (p) => p.clips.some((c) => c.type === 'video' || c.type === 'image') },
   { id: 'trim', label: '다듬기', tip: '빨간 선을 원하는 곳에 두고 <b>S</b>(자르기) → 필요 없는 조각 선택 후 <b>Delete</b>. 말이 많은 영상은 <b>스마트 → 무음 자동 컷</b>!', tab: 'smart',
     done: (p) => { const v = p.clips.filter((c) => c.trackId === 'v1'); return v.some((c) => c.in > 0.05) || v.length > new Set(v.map((c) => c.mediaId)).size; } },
-  { id: 'text', label: '자막', tip: '<b>텍스트</b>에서 스타일을 고르면 재생 위치에 추가돼요. 대본을 붙여넣으면 자막이 한 번에 만들어져요.', tab: 'text',
+  { id: 'text', label: '자막', tip: '<b>텍스트 → 🎙 자동 자막</b>을 누르면 말을 받아써서 자막이 생겨요. 하이라이트는 <b>강조 자막</b>으로 자동 구분돼요.', tab: 'text',
     done: (p) => p.clips.some((c) => c.type === 'text') },
   { id: 'music', label: '음악', tip: '음악 파일을 불러오면 배경음악 트랙에 들어가요. 말할 땐 <b>자동으로 작아져요</b>.', tab: 'media',
     done: (p) => p.clips.some((c) => c.type === 'audio') },
@@ -649,7 +624,10 @@ window.addEventListener('drop', (e) => {
 
 // ---------- 시작 ----------
 
+initSubtitleUI({ mainMediaClipIds: mainMediaClips });
+
 async function boot() {
+  await loadTemplates();
   const prefsRaw = await idbGet('kv', 'prefs');
   const prefs = prefsRaw ? JSON.parse(prefsRaw) : null;
   if (prefs) {

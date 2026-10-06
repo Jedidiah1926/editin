@@ -7,6 +7,10 @@ import {
 import { FILTERS, MOTIONS, TRANSITIONS, TEXT_STYLES, TEXT_ANIMS, SPEEDS, FONT_LIST, textStyleById } from './presets.js';
 import { h, fmtDur, toast } from './ui.js';
 import { buildFilter } from './engine.js';
+import { listTemplates, applyRef, templateFromText } from './templates.js';
+import { previewDataURL } from './textrender.js';
+import { textForRef } from './subtitle-ui.js';
+import { setClipRole } from './subtitles.js';
 import { silenceCut, normalizeLoudness, autoEnhance } from './smart.js';
 
 const SRC = 'inspector';
@@ -16,7 +20,7 @@ export class Inspector {
     this.root = root;
     this.engine = engine;
     this.actions = actions;
-    this.open = new Set(['basic', 'text', 'look', 'audio']);
+    this.open = new Set(['basic', 'text', 'textstyle', 'look', 'audio']);
     on('selection', () => this.render());
     on('mode', () => this.render());
     on('project', ({ source, live } = {}) => {
@@ -24,6 +28,7 @@ export class Inspector {
       this.render();
     });
     on('media-analyzed', () => this.render());
+    on('templates', () => this.render());
     on('clip-dblclick', () => setTimeout(() => this.root.querySelector('textarea')?.focus(), 30));
     this.render();
   }
@@ -179,17 +184,31 @@ export class Inspector {
     ta.addEventListener('input', () => mutateLive((p) => { p.clips.find((x) => x.id === c.id).text.content = ta.value; }, SRC));
     ta.addEventListener('blur', () => endGesture('텍스트 수정', SRC));
     ta.addEventListener('keydown', (e) => e.stopPropagation());
-    const styleCards = this.cards(TEXT_STYLES, c.text.style, (id) => this.setAll('텍스트 스타일 변경', (x) => {
-      const st = textStyleById(id);
-      x.text.style = id;
-      x.text.x = st.x; x.text.y = st.y; x.text.anim = st.anim;
-      delete x.text.color; delete x.text.font; delete x.text.bg; delete x.text.stroke;
-    }), { cls: 'text-cards', render: (it) => h('span', { class: `text-sample ts-${it.id}` }, it.sample) });
+    const refs = [
+      ...listTemplates().map((t) => ({ id: `tpl:${t.id}`, name: t.name, mine: true })),
+      ...TEXT_STYLES.map((st0) => ({ id: `style:${st0.id}`, name: st0.name, sample: st0.sample, styleId: st0.id })),
+    ];
+    const currentRef = c.text.ref || `style:${c.text.style}`;
+    const styleCards = this.cards(refs, currentRef, (ref) => this.setAll('텍스트 스타일 변경', (x) => applyRef(x.text, ref)), {
+      cls: 'text-cards',
+      render: (it) => (it.mine
+        ? h('img', { class: 'ref-thumb', alt: '', src: previewDataURL(textForRef(it.id), 160, 60, '내 템플릿') })
+        : h('span', { class: `text-sample ts-${it.styleId}` }, it.sample)),
+    });
+    const role = c.text.role;
+    const roleCtl = h('div', { class: 'ctl' },
+      h('label', {}, '자막 종류'),
+      this.seg([['normal', '일반 자막'], ['highlight', '⭐ 강조 자막']], role || '', (v) => { setClipRole(selectedClips().map((x) => x.id), v); this.render(); }),
+      h('div', { class: 'muted small' }, role ? '자막 디자인을 바꾸면 같은 종류 자막이 모두 함께 바뀌어요' : '고르면 자막 디자인(일반/강조)을 따라가요'));
+    const saveBtn = h('button', { class: 'btn small', onclick: () => {
+      const name = prompt('템플릿 이름', `내 스타일 ${listTemplates().length + 1}`);
+      if (name) templateFromText(c.text, name).then(() => toast(`'${name}' 템플릿을 저장했어요. 텍스트 탭과 자막 디자인에서 쓸 수 있어요.`));
+    } }, '💾 이 모양을 내 템플릿으로 저장');
     const st = textStyleById(c.text.style);
     const colors = ['#ffffff', '#ffe14d', '#ff5c5c', '#4fd1ff', '#7dff9b', '#ff9de2', '#111111'];
     this.root.append(
       this.section('text', '내용', ta),
-      this.section('textstyle', '스타일', styleCards),
+      this.section('textstyle', '스타일', roleCtl, styleCards, h('div', { class: 'btn-row' }, saveBtn)),
       this.section('textopt', '글자 꾸미기',
         this.slider('크기', { min: 40, max: 250, get: (x) => Math.round(x.text.size * 100), set: (x, v) => { x.text.size = v / 100; }, fmt: (v) => `${v}%`, reset: 100 }),
         h('div', { class: 'ctl' }, h('label', {}, '색상'), h('div', { class: 'swatches' },

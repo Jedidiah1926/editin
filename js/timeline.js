@@ -136,7 +136,7 @@ export class Timeline {
       let el = els.get(c.id);
       const lane = this.laneEls.get(c.trackId);
       if (!el || !lane) return false;
-      if (el._dur !== c.dur || el._in !== c.in || el._txt !== c.text?.content) {
+      if (el._dur !== c.dur || el._in !== c.in || el._txt !== c.text?.content || el._role !== c.text?.role) {
         const fresh = this.clipEl(c, TRACK_H[trackById(c.trackId).kind]);
         fresh.classList.toggle('selected', state.selection.has(c.id));
         el.replaceWith(fresh);
@@ -232,6 +232,10 @@ export class Timeline {
     const label = c.type === 'text' ? c.text.content.split('\n')[0] : (m?.name || '(미디어 없음)');
     const badges = [];
     if (c.speed !== 1) badges.push(h('span', { class: 'badge' }, `${c.speed}x`));
+    if (c.type === 'text' && c.text.role === 'highlight') {
+      el.classList.add('clip-hl');
+      badges.unshift(h('span', { class: 'badge', title: '강조 자막' }, '⭐'));
+    }
     if (c.color.filter !== 'none' || c.color.brightness || c.color.contrast || c.color.saturation || c.color.temperature) badges.push(h('span', { class: 'badge', title: '색감 적용됨' }, '🎨'));
     if (c.motion !== 'none') badges.push(h('span', { class: 'badge', title: '움직임 효과' }, '↗'));
     if (c.duck) badges.push(h('span', { class: 'badge', title: '목소리 나올 때 자동으로 작아짐' }, '자동볼륨'));
@@ -246,6 +250,7 @@ export class Timeline {
     el._dur = c.dur;
     el._in = c.in;
     el._txt = c.text?.content;
+    el._role = c.text?.role;
     el.append(h('div', { class: 'handle h-l', title: '끌어서 시작 부분 다듬기' }), h('div', { class: 'handle h-r', title: '끌어서 끝 부분 다듬기' }));
     return el;
   }

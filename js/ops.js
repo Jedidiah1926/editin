@@ -6,6 +6,7 @@ import {
 } from './store.js';
 import { textStyleById } from './presets.js';
 import { defaultDuration } from './media.js';
+import { applyRef } from './templates.js';
 
 export function trackFor(kind, preferId) {
   const p = project();
@@ -97,6 +98,7 @@ export function addTextClip(styleId, opts = {}) {
       start,
       text: { content: opts.content || (st.id === 'lower' ? '이름 · 소개' : st.id === 'title' ? '제목을 입력하세요' : '여기에 내용을 입력하세요'), style: st.id, size: 1, x: st.x, y: st.y, anim: st.anim },
     });
+    if (opts.ref) applyRef(c.text, opts.ref);
     const tr = findFreeTrack(p, 'text', start, dur, opts.trackId);
     c.trackId = tr.id;
     p.clips.push(c);

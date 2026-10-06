@@ -3,8 +3,11 @@
 import {
   state, project, on, emit, mediaRuntime, mediaById, clipEnd, projectDuration, trackById, clipsOnTrack,
 } from './store.js';
-import { filterById, textStyleById } from './presets.js';
-import { clamp, ease, easeOutBack } from './ui.js';
+import { filterById } from './presets.js';
+import { clamp, ease } from './ui.js';
+import { renderText, fadeFactor } from './textrender.js';
+
+export { fadeFactor };
 
 const PRELOAD = 0.8; // 다음 클립 미리 준비 (초)
 
@@ -437,101 +440,8 @@ export class Engine {
   }
 
   drawText(c, t, W, H, o = {}) {
-    const tx = c.text;
-    if (!tx || !tx.content) return;
-    const st = textStyleById(tx.style);
-    const ctx = this.ctx;
-    const local = clamp(t - c.start, 0, c.dur);
-    const size = Math.max(6, st.size * H * (tx.size || 1));
-    const font = tx.font || st.font;
-    const weight = tx.weight || st.weight;
-    ctx.save();
-    ctx.font = `${weight} ${size}px "${font}", "Noto Sans KR", sans-serif`;
-    const spacing = (st.spacing || 0) * size;
-    if (spacing && 'letterSpacing' in ctx) ctx.letterSpacing = `${spacing}px`;
-    ctx.textBaseline = 'middle';
-    const align = tx.align || st.align || 'center';
-    ctx.textAlign = align;
-
-    // 애니메이션
-    let alpha = c.transform.opacity * (o.alpha ?? 1);
-    let scale = 1;
-    let dy = 0;
-    let content = tx.content;
-    const anim = tx.anim ?? st.anim;
-    const inP = clamp(local / 0.3, 0, 1);
-    const outP = clamp((c.dur - local) / 0.25, 0, 1);
-    switch (anim) {
-      case 'fade': alpha *= Math.min(inP, outP); break;
-      case 'pop': scale = local < 0.35 ? easeOutBack(clamp(local / 0.35, 0, 1)) : 1; alpha *= Math.min(clamp(local / 0.1, 0, 1), outP); break;
-      case 'slideUp': dy = (1 - ease(inP)) * H * 0.05; alpha *= Math.min(inP, outP); break;
-      case 'typewriter': {
-        const chars = [...content];
-        const n = Math.ceil(chars.length * clamp(local / Math.min(1.5, c.dur * 0.6), 0, 1));
-        content = chars.slice(0, n).join('');
-        break;
-      }
-      default: break;
-    }
-    alpha *= fadeFactor(c, local);
-    if (alpha <= 0.001 || !content) { ctx.restore(); return; }
-
-    const maxW = W * 0.88;
-    const lines = wrapText(ctx, content, maxW);
-    const lh = size * 1.3;
-    let tw = 0;
-    for (const l of lines) tw = Math.max(tw, ctx.measureText(l).width);
-    const fullLines = anim === 'typewriter' ? wrapText(ctx, tx.content, maxW) : lines;
-    let fullW = 0;
-    for (const l of fullLines) fullW = Math.max(fullW, ctx.measureText(l).width);
-    const th = fullLines.length * lh;
-    const x = (tx.x ?? st.x) * W;
-    const y = (tx.y ?? st.y) * H + dy;
-    ctx.globalAlpha = alpha;
-    ctx.translate(x, y);
-    if (c.transform.rotation) ctx.rotate((c.transform.rotation * Math.PI) / 180);
-    if (scale !== 1) ctx.scale(scale, scale);
-
-    const left = align === 'left' ? 0 : align === 'right' ? -fullW : -fullW / 2;
-    const padX = size * 0.45;
-    const padY = size * 0.22;
-    const color = tx.color || st.color;
-    const bg = tx.bg !== undefined ? tx.bg : st.bg;
-    if (bg) {
-      ctx.fillStyle = bg;
-      roundRect(ctx, left - padX, -th / 2 - padY, fullW + padX * 2, th + padY * 2, size * 0.18);
-      ctx.fill();
-    }
-    if (st.bar) {
-      ctx.fillStyle = tx.accent || st.bar;
-      ctx.fillRect(left - padX, -th / 2 - padY, size * 0.14, th + padY * 2);
-    }
-    if (st.shadow && !bg) {
-      ctx.shadowColor = 'rgba(0,0,0,0.55)';
-      ctx.shadowBlur = size * 0.25;
-      ctx.shadowOffsetY = size * 0.05;
-    }
-    if (st.glow) {
-      ctx.shadowColor = tx.accent || st.glow;
-      ctx.shadowBlur = size * 0.6;
-    }
-    const stroke = tx.stroke !== undefined ? tx.stroke : st.stroke;
-    lines.forEach((line, i) => {
-      const ly = -th / 2 + lh * (i + 0.5);
-      if (stroke) {
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = size * (st.strokeW || 0.15);
-        ctx.strokeStyle = stroke;
-        ctx.strokeText(line, 0, ly);
-        ctx.shadowColor = 'transparent';
-      }
-      ctx.fillStyle = color;
-      ctx.fillText(line, 0, ly);
-      if (st.glow) ctx.fillText(line, 0, ly);
-    });
-    ctx.restore();
-    const bx = align === 'left' ? x + fullW / 2 : align === 'right' ? x - fullW / 2 : x;
-    this.bounds.push({ id: c.id, cx: bx, cy: y, w: fullW + padX * 2, h: th + padY * 2, rot: c.transform.rotation || 0, kind: 'text' });
+    const b = renderText(this.ctx, c, t, W, H, o);
+    if (b) this.bounds.push(b);
   }
 
   drawOverlay(W, H) {
@@ -618,12 +528,6 @@ export function prevClip(c) {
   return best;
 }
 
-export function fadeFactor(c, local) {
-  let f = 1;
-  if (c.fadeIn > 0) f = Math.min(f, clamp(local / c.fadeIn, 0, 1));
-  if (c.fadeOut > 0) f = Math.min(f, clamp((c.dur - local) / c.fadeOut, 0, 1));
-  return f;
-}
 
 /** 덕킹: 다른 영상/효과음에서 소리가 날 때 배경음악을 줄임 */
 function voiceActive(t, self) {
@@ -657,33 +561,4 @@ export function buildFilter(col) {
   return parts.join(' ');
 }
 
-export function wrapText(ctx, text, maxW) {
-  const out = [];
-  for (const para of String(text).split('\n')) {
-    if (ctx.measureText(para).width <= maxW) { out.push(para); continue; }
-    let line = '';
-    const tokens = para.split(/(\s+)/);
-    for (const tok of tokens) {
-      const test = line + tok;
-      if (ctx.measureText(test).width <= maxW) { line = test; continue; }
-      if (line.trim()) { out.push(line.trim()); line = ''; }
-      // 공백 없이 긴 토큰(한국어 등)은 글자 단위로 줄바꿈
-      for (const ch of tok.trimStart()) {
-        if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ''; }
-        line += ch;
-      }
-    }
-    if (line.trim()) out.push(line.trim());
-  }
-  return out.length ? out : [''];
-}
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
