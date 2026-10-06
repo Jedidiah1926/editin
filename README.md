@@ -7,7 +7,27 @@
 
 모든 처리는 내 컴퓨터의 브라우저 안에서만 이루어지고, 파일은 어디에도 업로드되지 않습니다.
 
-## 실행
+## 윈도우 앱 (추천)
+
+[Releases](https://github.com/Jedidiah1926/editin/releases)에서 `editin-Setup-x.x.x.exe`를 받아 설치하면 됩니다.
+
+- 유튜브 가져오기가 앱 안에서 바로 됩니다. 도우미를 따로 켜거나 yt-dlp·ffmpeg를 설치할 필요가 없습니다.
+- 앱에 들어 있는 yt-dlp는 **하루 한 번 자동으로 최신 버전으로 업데이트**됩니다. 공식 체크섬(SHA2-256SUMS)으로 확인한 파일만 교체합니다. 유튜브 가져오기 창에서 **지금 업데이트**를 눌러도 됩니다.
+- yt-dlp가 유튜브를 처리할 때 필요한 JavaScript 런타임으로 앱에 들어 있는 Node(Electron)를 씁니다.
+- 내보낸 MP4는 앱 안의 ffmpeg로 소리를 AAC로 바꾸고 faststart를 적용해, 어떤 플레이어에서도 재생됩니다.
+- 아직 코드 서명을 하지 않아서 처음 실행할 때 "Windows의 PC 보호" 화면이 나올 수 있습니다. **추가 정보 → 실행**을 누르세요.
+
+### 앱 개발 · 배포
+
+```bash
+npm install
+npm run app                 # 개발 중 실행 (vendor/에 yt-dlp를 넣어 두면 그걸 씀)
+npm run dist:win            # 윈도우 설치 파일 만들기 (윈도우에서 실행)
+```
+
+`v`로 시작하는 태그(예: `v0.1.0`)를 올리면 GitHub Actions(`.github/workflows/release.yml`)가 윈도우에서 앱을 빌드합니다. 이때 yt-dlp.exe를 받아 체크섬을 확인하고, 앱이 실행되는지 점검한 뒤 Release에 설치 파일을 올립니다.
+
+## 웹 버전 실행
 
 ES 모듈을 쓰기 때문에 로컬 웹 서버로 열어야 합니다. 빌드 과정은 없습니다.
 
@@ -156,6 +176,7 @@ js/smart.js       무음 컷, 음량 맞춤, 보정, 완성도 점검
 js/subtitles.js   자동 자막(받아쓰기 → 줄 나누기), 강조 판별, 자막 디자인 적용, 대본·SRT
 js/asr-worker.js  음성 인식 워커 (transformers.js + Whisper, 브라우저 안에서 실행)
 js/templates.js   내 템플릿 저장소, 자막 바 이미지 처리, 사진 속 자막 색 추출
+electron/         데스크톱 앱 (main: 화면·도우미·마무리, ytdlp: 자동 업데이트, preload)
 js/youtube.js     유튜브 링크 가져오기 (구간 선택 · 도우미 연동 · 출처 표시)
 tools/yt-helper.mjs 유튜브 도우미 (내 컴퓨터에서 실행, yt-dlp 사용)
 js/geometry.js    영상 배치 계산 (맞춤 · 크기 · 자르기), 검은 여백 찾기

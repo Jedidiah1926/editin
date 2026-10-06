@@ -594,3 +594,4 @@ body[data-mode='easy'] .tl-toolbar .tool { font-size: 13.5px; padding: 6px 11px;
 .cmd-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .cmd-row code { flex: 1; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: 12.5px ui-monospace, monospace; overflow-x: auto; white-space: nowrap; }
 @media (max-width: 820px) { .yt-range { grid-template-columns: 1fr; } }
+.yt-tool-bar { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }

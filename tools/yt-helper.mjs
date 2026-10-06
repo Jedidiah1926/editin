@@ -3,6 +3,7 @@
 // 브라우저는 보안 정책상 유튜브 영상을 직접 받을 수 없어서, 내 컴퓨터에서 이 도우미가 yt-dlp로 받아 편집기에 넘겨줌.
 // 필요한 프로그램: yt-dlp, ffmpeg  (설치 방법은 README 참고)
 // 실행: npm run yt-helper   (기본 주소 http://127.0.0.1:8787)
+// 데스크톱 앱(Electron)에서는 앱 안에서 startHelper()로 바로 켜짐 — 따로 실행할 필요 없음
 
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
@@ -10,33 +11,41 @@ import { mkdtempSync, readdirSync, rmSync, statSync, createReadStream } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 const PORT = Number(process.env.EDITIN_HELPER_PORT || 8787);
 const HOST = '127.0.0.1';
 // 편집기를 연 주소만 허용 (다른 웹사이트가 도우미를 쓰지 못하게)
-const EXTRA_ORIGINS = (process.env.EDITIN_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const MAX_JOBS = 3;
 
-function findYtDlp() {
-  for (const [cmd, pre] of [['yt-dlp', []], ['yt-dlp.exe', []], ['python3', ['-m', 'yt_dlp']], ['python', ['-m', 'yt_dlp']]]) {
-    const r = spawnSync(cmd, [...pre, '--version'], { encoding: 'utf8' });
+export function findYtDlp(candidates) {
+  const list = candidates || [['yt-dlp', []], ['yt-dlp.exe', []], ['python3', ['-m', 'yt_dlp']], ['python', ['-m', 'yt_dlp']]];
+  for (const [cmd, pre] of list) {
+    const r = spawnSync(cmd, [...pre, '--version'], { encoding: 'utf8', windowsHide: true });
     if (r.status === 0) return { cmd, pre, version: r.stdout.trim() };
   }
   return null;
 }
 
-function hasFfmpeg() {
-  return spawnSync('ffmpeg', ['-version']).status === 0;
+export function hasFfmpeg(path = 'ffmpeg') {
+  return spawnSync(path, ['-version'], { windowsHide: true }).status === 0;
 }
 
-const ytdlp = findYtDlp();
-const ffmpeg = hasFfmpeg();
+// 설정: CLI로 실행하면 시스템에 설치된 것을, 앱에서는 앱에 들어 있는 것을 씀
+const cfg = {
+  ytdlp: null, // { cmd, pre, version }
+  ffmpeg: false,
+  ffmpegPath: null, // 지정하면 --ffmpeg-location으로 전달
+  extraArgs: [], // 예: JS 런타임 지정
+  env: {},
+  extraOrigins: (process.env.EDITIN_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
+};
 const jobs = new Map();
 
 function cors(req, res) {
   const origin = req.headers.origin;
-  if (origin && (LOCAL_ORIGIN.test(origin) || EXTRA_ORIGINS.includes(origin))) {
+  if (origin && (LOCAL_ORIGIN.test(origin) || cfg.extraOrigins.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -70,8 +79,10 @@ function readBody(req) {
   });
 }
 
-function run(args, { onLine } = {}) {
-  return spawn(ytdlp.cmd, [...ytdlp.pre, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+function run(args) {
+  const pre = [...cfg.ytdlp.pre, ...cfg.extraArgs];
+  if (cfg.ffmpegPath) pre.push('--ffmpeg-location', cfg.ffmpegPath);
+  return spawn(cfg.ytdlp.cmd, [...pre, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...cfg.env }, windowsHide: true });
 }
 
 /** 영상 정보 (제목, 채널, 길이, 썸네일) */
@@ -179,10 +190,11 @@ function cleanup(job) {
 const server = http.createServer(async (req, res) => {
   if (!cors(req, res)) { send(res, 403, { error: '허용되지 않은 주소에서 온 요청이에요' }); return; }
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-  const u = new URL(req.url, `http://${HOST}:${PORT}`);
+  const u = new URL(req.url, `http://${HOST}`);
+  const { ytdlp, ffmpeg } = cfg;
   try {
     if (u.pathname === '/health') {
-      send(res, 200, { ok: !!ytdlp && ffmpeg, app: 'editin-helper', ytdlp: ytdlp?.version || null, ffmpeg });
+      send(res, 200, { ok: !!ytdlp && ffmpeg, app: 'editin-helper', ytdlp: ytdlp?.version || null, ffmpeg, embedded: !!cfg.embedded });
       return;
     }
     if (!ytdlp) { send(res, 500, { error: 'yt-dlp가 설치되어 있지 않아요' }); return; }
@@ -238,14 +250,32 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`\n  editin 유튜브 도우미가 켜졌어요 → http://${HOST}:${PORT}`);
-  console.log(`  yt-dlp: ${ytdlp ? ytdlp.version : '❌ 없음 (설치 필요: pip install yt-dlp)'}`);
-  console.log(`  ffmpeg: ${ffmpeg ? '✅' : '❌ 없음 (설치 필요)'}`);
-  console.log('  편집기를 쓰는 동안 이 창을 켜 두세요. 끄려면 Ctrl+C\n');
-});
+/** 도우미 시작. port=0이면 빈 포트를 골라 씀 */
+export function startHelper(opts = {}) {
+  Object.assign(cfg, opts, { extraOrigins: [...cfg.extraOrigins, ...(opts.extraOrigins || [])] });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(opts.port ?? PORT, HOST, () => resolve({
+      port: server.address().port,
+      url: `http://${HOST}:${server.address().port}`,
+      setYtDlp: (y) => { cfg.ytdlp = y; },
+      stop: () => { for (const j of jobs.values()) { j.proc?.kill(); cleanup(j); } server.close(); },
+    }));
+  });
+}
 
-process.on('SIGINT', () => {
-  for (const j of jobs.values()) { j.proc?.kill(); cleanup(j); }
-  process.exit(0);
-});
+// 명령줄에서 직접 실행했을 때 (npm run yt-helper)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const ytdlp = findYtDlp();
+  const ffmpeg = hasFfmpeg();
+  startHelper({ ytdlp, ffmpeg }).then(() => {
+    console.log(`\n  editin 유튜브 도우미가 켜졌어요 → http://${HOST}:${PORT}`);
+    console.log(`  yt-dlp: ${ytdlp ? ytdlp.version : '❌ 없음 (설치 필요: pip install yt-dlp)'}`);
+    console.log(`  ffmpeg: ${ffmpeg ? '✅' : '❌ 없음 (설치 필요)'}`);
+    console.log('  편집기를 쓰는 동안 이 창을 켜 두세요. 끄려면 Ctrl+C\n');
+  });
+  process.on('SIGINT', () => {
+    for (const j of jobs.values()) { j.proc?.kill(); cleanup(j); }
+    process.exit(0);
+  });
+}

@@ -8,7 +8,11 @@ import { addMediaClip, trackFor } from './ops.js';
 import { textStyleById } from './presets.js';
 
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
+// 데스크톱 앱이면 앱 안에 들어 있는 도우미를 씀
+const native = typeof window !== 'undefined' ? window.editinNative : null;
+export const isDesktopApp = !!native?.isApp;
 const helperUrl = () => {
+  if (native?.helperUrl) return native.helperUrl;
   try { return localStorage.getItem('editin.helper') || DEFAULT_HELPER; } catch { return DEFAULT_HELPER; }
 };
 
@@ -113,6 +117,8 @@ export function openYouTubeImport(prefill = '') {
     h('p', { class: 'muted small' }, '키리누키(클립)는 원본 채널의 2차 창작·클립 가이드라인을 확인하고, 허락된 범위에서 만들어 주세요. 출처 표시는 자동으로 넣을 수 있어요.'));
   const stage = h('div', { class: 'yt-stage' });
   body.append(stepUrl, stage);
+  const bar = ytdlpBar();
+  if (bar) body.append(bar);
 
   async function go() {
     const url = urlInp.value.trim();
@@ -319,7 +325,45 @@ async function addToProject(file, info, url, o) {
   toast(`'${info.title || '영상'}' ${fmtClock(o.start)}~${fmtClock(o.end)} 구간을 가져왔어요`, { duration: 5000 });
 }
 
+function appToolError(retry, health) {
+  return h('div', { class: 'yt-setup' },
+    h('div', { class: 'check-item error' }, health && !health.ffmpeg
+      ? '⛔ 앱에 들어 있는 ffmpeg를 찾지 못했어요. 앱을 다시 설치해 주세요.'
+      : '⛔ 앱 안의 다운로드 도구(yt-dlp)를 시작하지 못했어요. 앱을 다시 실행하거나, 아래 버튼으로 yt-dlp를 다시 받아 보세요.'),
+    h('div', { class: 'modal-actions' },
+      h('button', { class: 'btn', onclick: async () => { toast('yt-dlp 받는 중…'); const r = await native.ytdlp.update(); toast(updateMessage(r)); } }, 'yt-dlp 다시 받기'),
+      h('button', { class: 'btn primary', onclick: retry }, '다시 확인')));
+}
+
+export function updateMessage(r) {
+  if (!r) return '';
+  if (r.status === 'updated') return `yt-dlp를 최신 버전(${r.version})으로 업데이트했어요`;
+  if (r.status === 'latest') return `yt-dlp가 이미 최신 버전이에요 (${r.version})`;
+  if (r.status === 'checking') return 'yt-dlp 업데이트 확인 중…';
+  if (r.status === 'error') return `yt-dlp 업데이트 실패: ${r.message || '알 수 없는 오류'}`;
+  return r.message || '';
+}
+
+/** 앱: yt-dlp 버전 표시 + 지금 업데이트 */
+function ytdlpBar() {
+  if (!isDesktopApp) return null;
+  const label = h('span', { class: 'muted small' }, 'yt-dlp 확인 중…');
+  const btn = h('button', { class: 'btn ghost small', onclick: async () => {
+    btn.disabled = true;
+    label.textContent = 'yt-dlp 업데이트 확인 중…';
+    const r = await native.ytdlp.update();
+    label.textContent = `yt-dlp ${r.version || ''} · ${r.status === 'updated' ? '방금 업데이트됨' : r.status === 'latest' ? '최신 버전' : '업데이트 실패'}`;
+    if (r.status === 'error') toast(updateMessage(r), { type: 'error' });
+    btn.disabled = false;
+  } }, '지금 업데이트');
+  native.ytdlp.status().then((s) => {
+    label.textContent = s.version ? `yt-dlp ${s.version} · 하루 한 번 자동 업데이트` : 'yt-dlp 없음';
+  });
+  return h('div', { class: 'yt-tool-bar' }, label, btn);
+}
+
 function setupGuide(retry, health) {
+  if (isDesktopApp) return appToolError(retry, health);
   const mac = /Mac/.test(navigator.platform);
   const win = /Win/.test(navigator.platform);
   const install = win

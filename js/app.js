@@ -16,7 +16,7 @@ import {
   silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, runChecks,
 } from './smart.js';
 import { initSubtitleUI } from './subtitle-ui.js';
-import { openYouTubeImport, isYouTubeUrl } from './youtube.js';
+import { openYouTubeImport, isYouTubeUrl, updateMessage } from './youtube.js';
 import { initTransformUI, toggleCrop, setCropMode, isCropMode } from './transform-ui.js';
 import { fitSubtitleToFormat } from './subtitles.js';
 import { loadTemplates } from './templates.js';
@@ -315,6 +315,13 @@ fileInput.addEventListener('change', async () => {
 });
 $('#import-btn').onclick = () => fileInput.click();
 $('#yt-btn').onclick = () => openYouTubeImport();
+// 데스크톱 앱: yt-dlp 자동 업데이트 결과 알림
+if (window.editinNative?.ytdlp) {
+  document.body.classList.add('is-app');
+  window.editinNative.ytdlp.onStatus((s) => {
+    if (s.status === 'updated' || s.status === 'error') toast(updateMessage(s), { type: s.status === 'error' ? 'error' : '' });
+  });
+}
 // 편집기 아무 곳에서나 유튜브 링크를 붙여넣으면 바로 가져오기 창
 document.addEventListener('paste', (e) => {
   const tag = e.target.tagName;

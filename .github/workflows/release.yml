@@ -1,0 +1,78 @@
+name: 윈도우 앱 배포
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 의존성 설치 (Electron, ffmpeg 포함)
+        run: npm ci
+
+      - name: yt-dlp 받기 (공식 체크섬 확인)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path vendor | Out-Null
+          $base = "https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+          Invoke-WebRequest "$base/yt-dlp.exe" -OutFile vendor/yt-dlp.exe
+          Invoke-WebRequest "$base/SHA2-256SUMS" -OutFile sums.txt
+          $line = Select-String -Path sums.txt -Pattern '\syt-dlp\.exe$' | Select-Object -First 1
+          $want = ($line.Line -split '\s+')[0].ToLower()
+          $have = (Get-FileHash vendor/yt-dlp.exe -Algorithm SHA256).Hash.ToLower()
+          if ($want -ne $have) { throw "yt-dlp 체크섬 불일치: $want / $have" }
+          ./vendor/yt-dlp.exe --version
+
+      - name: 앱 빌드 (설치 파일)
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: 빌드 결과 확인
+        shell: pwsh
+        run: |
+          $app = "dist/win-unpacked"
+          foreach ($f in @("$app/editin.exe", "$app/resources/bin/yt-dlp.exe", "$app/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe")) {
+            if (!(Test-Path $f)) { throw "빠진 파일: $f" }
+            Write-Host "OK $f ($((Get-Item $f).Length) bytes)"
+          }
+          & "$app/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          # yt-dlp가 앱의 Node(Electron)를 JS 런타임으로 인식하는지
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          & "$app/editin.exe" --version
+          & "$app/resources/bin/yt-dlp.exe" -v --js-runtimes "node:$((Resolve-Path "$app/editin.exe").Path)" --version 2>&1 | Select-String "JS runtimes|yt-dlp version"
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          Get-ChildItem dist -Filter *.exe | Select-Object Name, Length
+
+      - name: 실행 확인 (20초간 켜 두기)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/win-unpacked/editin.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "앱이 바로 종료됐어요 (exit $($p.ExitCode))" }
+          Write-Host "앱이 정상적으로 실행 중이에요"
+          Stop-Process -Id $p.Id -Force
+
+      - name: 빌드 파일 보관
+        uses: actions/upload-artifact@v4
+        with:
+          name: editin-windows
+          path: dist/*.exe
+
+      - name: GitHub 릴리스 만들기
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: editin ${{ github.ref_name }}
+          body_path: .github/release-notes.md
+          files: dist/*.exe

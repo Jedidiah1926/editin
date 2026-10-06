@@ -5,7 +5,7 @@ import { h, modal, toast, download, fmtTime } from './ui.js';
 import { runChecks } from './smart.js';
 
 const FORMATS = [
-  { id: 'mp4', mime: ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4'], ext: 'mp4', name: 'MP4', hint: '어디서나 재생 (추천)' },
+  { id: 'mp4', mime: ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4;codecs=avc1.640028,opus', 'video/mp4;codecs=avc1,opus', 'video/mp4'], ext: 'mp4', name: 'MP4', hint: '어디서나 재생 (추천)' },
   { id: 'webm', mime: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'], ext: 'webm', name: 'WebM', hint: '웹·유튜브 업로드용' },
 ];
 
@@ -166,7 +166,19 @@ async function render(engine, opts, fmt, [a, b]) {
   engine.invalidate();
   closeModal();
   if (cancelled) { toast('내보내기를 취소했어요'); return; }
-  const blob = new Blob(chunks, { type: fmt.mime.split(';')[0] });
+  let blob = new Blob(chunks, { type: fmt.mime.split(';')[0] });
+  // 데스크톱 앱: ffmpeg로 마무리 (소리를 AAC로, 빠른 재생 시작) → 어떤 플레이어에서도 재생되는 MP4
+  if (window.editinNative?.finalizeVideo && fmt.ext === 'mp4') {
+    const closeFin = modal('마무리 중', h('div', { class: 'export-progress' }, h('p', {}, '어디서나 재생되도록 파일을 다듬는 중이에요…')), { locked: true });
+    try {
+      const out = await window.editinNative.finalizeVideo(await blob.arrayBuffer());
+      if (out?.byteLength) blob = new Blob([out], { type: 'video/mp4' });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      closeFin();
+    }
+  }
   const fname = `${(opts.name || 'video').replace(/[\\/:*?"<>|]/g, '_')}.${fmt.ext}`;
   download(blob, fname);
   emit('exported');
