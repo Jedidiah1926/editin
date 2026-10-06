@@ -396,6 +396,7 @@ export class Engine {
     const alpha = tf.opacity * (o.frozen ? 1 : fadeFactor(c, local)) * (o.alpha ?? 1);
     if (alpha <= 0.001) return;
     const v = L.vis;
+    if (c.fit === 'blurfill') this.drawBlurFill(src, L, W, H, alpha);
     ctx.save();
     ctx.translate(L.ax, L.ay);
     if (L.rot) ctx.rotate((L.rot * Math.PI) / 180);
@@ -427,6 +428,28 @@ export class Engine {
     }
     ctx.restore();
     if (!o.frozen) this.bounds.push({ id: c.id, cx: L.cx, cy: L.cy, w: v.w, h: v.h, rot: L.rot, kind: 'visual', sw, sh });
+  }
+
+  /** 세로 화면용: 같은 영상을 크게 흐리게 깔아 위아래 빈 곳을 채움 (작게 그렸다 키워서 가볍게 흐림) */
+  drawBlurFill(src, L, W, H, alpha) {
+    if (!this.blurCanvas) this.blurCanvas = document.createElement('canvas');
+    const bc = this.blurCanvas;
+    const bw = Math.max(16, Math.round(W / 12));
+    const bh = Math.max(16, Math.round(H / 12));
+    if (bc.width !== bw || bc.height !== bh) { bc.width = bw; bc.height = bh; }
+    const bctx = bc.getContext('2d');
+    const cs = Math.max(bw / L.src.w, bh / L.src.h) * 1.1;
+    const dw = L.src.w * cs;
+    const dh = L.src.h * cs;
+    bctx.filter = 'blur(2px) brightness(0.62) saturate(1.25)';
+    bctx.drawImage(src, L.src.x, L.src.y, L.src.w, L.src.h, (bw - dw) / 2, (bh - dh) / 2, dw, dh);
+    bctx.filter = 'none';
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bc, 0, 0, W, H);
+    ctx.restore();
   }
 
   drawText(c, t, W, H, o = {}) {

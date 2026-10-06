@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "npx --yes http-server -c-1 -p 8080 .",
-    "lint": "npx --yes eslint js/"
+    "lint": "npx --yes eslint js/",
+    "yt-helper": "node tools/yt-helper.mjs"
   }
 }
