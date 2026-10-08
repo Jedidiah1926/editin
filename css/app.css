@@ -624,3 +624,7 @@ body.dragging-media, body.dragging-media * { cursor: grabbing !important; user-s
 .fill-fg { position: absolute; inset: 0; background: var(--thumb) center / contain no-repeat; }
 .fill-cover .fill-fg { background-size: cover; }
 .fill-bg { position: absolute; inset: -12%; background: var(--thumb) center / cover no-repeat; filter: blur(7px) brightness(0.6) saturate(1.25); }
+.media-yt.src-chzzk { background: #00ffa3; color: #0b1a14; }
+.media-yt.src-web { background: #5b7cff; }
+.yt-player { position: relative; }
+.yt-noplayer-note { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-size: 12.5px; }

@@ -16,7 +16,7 @@ import {
   silenceCut, detectSpeech, normalizeLoudness, autoEnhance, applyTransitionAll, polishEnds, fitAll, runChecks,
 } from './smart.js';
 import { initSubtitleUI } from './subtitle-ui.js';
-import { openYouTubeImport, isYouTubeUrl, updateMessage } from './youtube.js';
+import { openYouTubeImport, isSupportedUrl, updateMessage } from './youtube.js';
 import { initTransformUI, toggleCrop, setCropMode, isCropMode } from './transform-ui.js';
 import { fitSubtitleToFormat } from './subtitles.js';
 import { cropForRatio } from './geometry.js';
@@ -330,7 +330,7 @@ document.addEventListener('paste', (e) => {
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || document.querySelector('.modal-back')) return;
   const text = e.clipboardData?.getData('text') || '';
-  if (isYouTubeUrl(text)) { e.preventDefault(); openYouTubeImport(text.trim()); }
+  if (isSupportedUrl(text)) { e.preventDefault(); openYouTubeImport(text.trim()); }
 });
 $('#media-drop').onclick = () => fileInput.click();
 
@@ -380,7 +380,7 @@ function renderMedia() {
         rt?.analyzing ? h('span', { class: 'media-busy', title: '분석 중' }) : null,
         m.type !== 'image' ? h('span', { class: 'media-dur' }, fmtDur(m.duration)) : null,
         used ? h('span', { class: 'media-used', title: `타임라인에서 ${used}번 사용 중` }, `${used}`) : null,
-        m.source?.kind === 'youtube' ? h('span', { class: 'media-yt', title: `${m.source.channel || ''} · ${m.source.title || ''}\n${m.source.url}` }, '▶ YT') : null,
+        m.source?.url ? h('span', { class: `media-yt src-${m.source.kind}`, title: `${m.source.channel || ''} · ${m.source.title || ''}\n${m.source.url}` }, { youtube: '▶ YT', chzzk: '치지직' }[m.source.kind] || 'WEB') : null,
         h('button', { class: 'media-add', title: '타임라인에 추가', 'aria-label': `${m.name} 타임라인에 추가`, onclick: (e) => { e.stopPropagation(); addMediaClip(m.id); } }, '+'),
       ),
       h('div', { class: 'media-name' }, h('span', {}, icon), ' ', m.name));

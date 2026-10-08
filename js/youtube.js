@@ -1,4 +1,4 @@
-// 유튜브 링크로 가져오기 (키리누키): 구간을 골라 그 부분만 받아서 소스로 추가
+// 유튜브 · 치지직 링크로 가져오기 (키리누키): 구간을 골라 그 부분만 받아서 소스로 추가
 // 실제 다운로드는 내 컴퓨터에서 실행하는 도우미(tools/yt-helper.mjs)가 yt-dlp로 처리
 
 import { state, project, mutate, mediaById, clipsOnTrack, clipEnd, defaultClip } from './store.js';
@@ -36,6 +36,35 @@ export function parseYouTube(url) {
     return null;
   }
 }
+
+/** 치지직 링크: 다시보기·업로드 영상(/video/숫자), 라이브(/live/채널), 클립(/clips/…) */
+export function parseChzzk(url) {
+  try {
+    const u = new URL(String(url).trim());
+    if (!/(^|\.)chzzk\.naver\.com$/.test(u.hostname)) return null;
+    const p = u.pathname;
+    const time = u.searchParams.get('currentTime') || u.searchParams.get('t') || u.searchParams.get('start');
+    const start = time ? parseTime(time) : null;
+    let m = p.match(/^\/video\/(\d+)/);
+    if (m) return { platform: 'chzzk', kind: 'video', id: m[1], start };
+    m = p.match(/^\/live\/([\da-f]+)/i);
+    if (m) return { platform: 'chzzk', kind: 'live', id: m[1], start: null };
+    m = p.match(/^\/(?:embed\/)?clips?\/([\w-]+)/);
+    if (m) return { platform: 'chzzk', kind: 'clip', id: m[1], start: null };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 지원하는 링크인지와 종류 */
+export function parseLink(url) {
+  const yt = parseYouTube(url);
+  if (yt) return { platform: 'youtube', kind: 'video', ...yt };
+  return parseChzzk(url);
+}
+
+export const PLATFORM_NAME = { youtube: '유튜브', chzzk: '치지직' };
 
 /** "1:02:03", "1;02;03", "62:03", "3723", "1h2m3s", "1시간 2분 3초" → 초 */
 export function parseTime(s) {
@@ -112,10 +141,10 @@ function loadYTApi() {
 export function openYouTubeImport(prefill = '') {
   let close;
   const body = h('div', { class: 'yt-import' });
-  close = modal('▶ 유튜브 링크로 가져오기', body, { wide: true, onClose: () => cleanup?.() });
+  close = modal('▶ 유튜브 · 치지직 링크로 가져오기', body, { wide: true, onClose: () => cleanup?.() });
   let cleanup = null;
 
-  const urlInp = h('input', { class: 'text-input', placeholder: 'https://www.youtube.com/watch?v=...  (쇼츠·라이브 다시보기 링크도 돼요)', value: prefill, 'aria-label': '유튜브 링크' });
+  const urlInp = h('input', { class: 'text-input', placeholder: '유튜브 또는 치지직 다시보기 링크 (예: https://chzzk.naver.com/video/1234)', value: prefill, 'aria-label': '영상 링크' });
   urlInp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') go(); });
   const goBtn = h('button', { class: 'btn primary', onclick: () => go() }, '영상 불러오기');
   const stepUrl = h('div', { class: 'yt-step' },
@@ -129,6 +158,11 @@ export function openYouTubeImport(prefill = '') {
   async function go() {
     const url = urlInp.value.trim();
     if (!/^https?:\/\//.test(url)) { toast('링크를 붙여넣어 주세요'); return; }
+    const link = parseLink(url);
+    if (link?.platform === 'chzzk' && link.kind === 'clip') {
+      stage.replaceChildren(h('div', { class: 'check-item warn' }, '⚠️ 치지직 클립 링크는 아직 가져올 수 없어요. 클립의 원본 다시보기 링크(chzzk.naver.com/video/…)를 넣고 구간을 골라 주세요.'));
+      return;
+    }
     goBtn.disabled = true;
     stage.replaceChildren(h('div', { class: 'muted' }, '도우미 확인 중…'));
     const health = await checkHelper();
@@ -146,9 +180,10 @@ export function openYouTubeImport(prefill = '') {
   }
 
   function showPicker(url, info) {
-    const yt = parseYouTube(url);
+    const link = parseLink(url);
+    const yt = link?.platform === 'youtube' ? link : null;
     const dur = info.duration || null;
-    let start = yt?.start ?? 0;
+    let start = link?.start ?? 0;
     let end = dur ? Math.min(dur, start + 60) : start + 60;
     const narrow = project().width / project().height < 1.3; // 세로·정사각 화면
     const opts = { height: 1080, exact: true, credit: true, full: false, fill: narrow ? 'blurfill' : 'keep' };
@@ -187,11 +222,11 @@ export function openYouTubeImport(prefill = '') {
     const playerBox = h('div', { class: 'yt-player' }, h('div', { id: 'yt-player-el' }));
     let player = null;
     let previewTimer = null;
-    const nowBtn = (label, fn) => h('button', { class: 'btn small', onclick: () => {
+    const nowBtn = (label, fn) => (!yt ? null : h('button', { class: 'btn small', onclick: () => {
       if (!player?.getCurrentTime) { toast('플레이어가 아직 준비되지 않았어요. 시간을 직접 적어 주세요.'); return; }
       fn(player.getCurrentTime());
       sync();
-    } }, label);
+    } }, label));
     if (yt) {
       loadYTApi().then((YT) => {
         player = new YT.Player('yt-player-el', {
@@ -203,7 +238,14 @@ export function openYouTubeImport(prefill = '') {
         playerBox.replaceChildren(h('div', { class: 'yt-noplayer muted small' }, '플레이어를 불러오지 못했어요. 아래에 시간을 직접 적어 주세요.'));
       });
     } else {
-      playerBox.replaceChildren(info.thumbnail ? h('img', { src: info.thumbnail, alt: '', class: 'yt-thumb' }) : h('div', { class: 'yt-noplayer muted small' }, '미리보기를 지원하지 않는 링크예요. 시간을 직접 적어 주세요.'));
+      // 치지직 등: 플레이어를 넣을 수 없어서 썸네일 + 원래 사이트에서 시간 확인
+      const chzzkUrl = link?.platform === 'chzzk' && link.kind === 'video'
+        ? () => `https://chzzk.naver.com/video/${link.id}${start ? `?currentTime=${Math.floor(start)}` : ''}` : null;
+      playerBox.replaceChildren(
+        info.thumbnail ? h('img', { src: info.thumbnail, alt: '', class: 'yt-thumb' }) : null,
+        h('div', { class: 'yt-noplayer-note' },
+          h('span', {}, `${PLATFORM_NAME[link?.platform] || '이 사이트'} 영상은 여기서 재생할 수 없어요. 원하는 장면의 시간을 확인해서 아래에 적어 주세요.`),
+          chzzkUrl ? h('button', { class: 'btn small', onclick: () => window.open(chzzkUrl(), '_blank') }, '치지직에서 열기 ↗') : null));
     }
     cleanup = () => { clearInterval(previewTimer); try { player?.destroy?.(); } catch { /* 무시 */ } };
     const preview = () => {
@@ -255,8 +297,10 @@ export function openYouTubeImport(prefill = '') {
     rangeBox.append(
       h('div', { class: 'ctl' }, h('label', {}, '시작'), h('div', { class: 'row' }, startInp, nowBtn('지금 위치', (t) => { start = t; if (end <= start) end = start + 30; }))),
       h('div', { class: 'ctl' }, h('label', {}, '끝'), h('div', { class: 'row' }, endInp, nowBtn('지금 위치', (t) => { end = t; }))),
-      h('div', { class: 'ctl yt-range-side' }, h('button', { class: 'btn small', onclick: preview }, '▶ 구간 미리보기')));
+      yt ? h('div', { class: 'ctl yt-range-side' }, h('button', { class: 'btn small', onclick: preview }, '▶ 구간 미리보기')) : h('div'));
+    if (info.isLive) goBtn2.disabled = true;
     goBtn2.onclick = () => {
+      if (info.isLive) return;
       if (!opts.full && end - start <= 0.5) { toast('구간을 다시 확인해 주세요'); return; }
       cleanup?.();
       download(url, info, opts.full ? { ...opts, start: null, end: null } : { ...opts, start, end });
@@ -265,7 +309,7 @@ export function openYouTubeImport(prefill = '') {
       h('div', { class: 'yt-meta' },
         h('b', {}, info.title || '제목 없음'),
         h('span', { class: 'muted small' }, [info.channel, dur ? fmtClock(dur) : null, info.isLive ? '라이브 중' : null].filter(Boolean).join(' · '))),
-      info.isLive ? h('div', { class: 'check-item warn' }, '⚠️ 아직 진행 중인 라이브예요. 방송이 끝난 뒤 다시보기 링크로 가져오는 게 안정적이에요.') : null,
+      info.isLive ? h('div', { class: 'check-item warn' }, '⚠️ 지금 방송 중인 라이브는 가져올 수 없어요. 방송이 끝난 뒤 다시보기 링크로 가져와 주세요.') : null,
       playerBox,
       h('div', { class: 'yt-mode-row' }, modeSeg, lenEl),
       rangeBox,
@@ -350,7 +394,7 @@ async function addToProject(file, info, url, o) {
   if (!m) return;
   mutate('유튜브 출처 기록', (p) => {
     const mm = p.media.find((x) => x.id === m.id);
-    if (mm) mm.source = { kind: 'youtube', url: info.url || url, title: info.title, channel: info.channel, start: o.start, end: o.end };
+    if (mm) mm.source = { kind: parseLink(url)?.platform || 'web', url: info.url || url, title: info.title, channel: info.channel, start: o.start, end: o.end };
   });
   const main = clipsOnTrack('v1');
   const c = addMediaClip(m.id, { at: main.length ? clipEnd(main[main.length - 1]) : 0, trackId: 'v1' });
@@ -438,6 +482,11 @@ function setupGuide(retry, health) {
 /** 붙여넣은 글이 유튜브 링크인지 */
 export function isYouTubeUrl(s) {
   return !!parseYouTube(String(s || ''));
+}
+
+/** 붙여넣으면 가져오기 창을 열 링크 (유튜브·치지직) */
+export function isSupportedUrl(s) {
+  return !!parseLink(String(s || '').trim());
 }
 
 export { mediaById };

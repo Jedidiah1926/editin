@@ -127,55 +127,108 @@ const fmtT = (t) => {
   return `${h}:${String(m).padStart(2, '0')}:${s.padStart(5, '0')}`;
 };
 
-/** 지정 구간만 받기 (키리누키용). start/end가 없으면 전체 */
+/**
+ * 지정 구간만 받기 (키리누키용). start/end가 없으면 전체.
+ * 사이트마다 구간 받기 지원이 달라서(치지직 DASH 등) 실패하면 순서대로 다른 방법을 시도:
+ *  1) 구간만 + 정확한 자르기  2) 구간만 (키프레임 기준)  3) 전체를 받은 뒤 ffmpeg로 잘라내기
+ */
 function startDownload({ url, start, end, height = 1080, exact = true }) {
   const id = randomUUID();
   const dir = mkdtempSync(join(tmpdir(), 'editin-'));
   const job = { id, dir, status: 'running', progress: 0, stage: '준비 중', error: null, file: null, proc: null };
-  const args = [
-    '--no-playlist', '--no-warnings', '--newline', '--no-part',
-    '-f', `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/bv*[height<=${height}]+ba/b[height<=${height}]/b`,
-    '--merge-output-format', 'mp4',
-    '-o', join(dir, 'clip.%(ext)s'),
-    '--progress-template', 'download:PROG %(progress._percent_str)s',
-  ];
-  if (start != null || end != null) {
-    const a = Math.max(0, Number(start) || 0);
-    const b = end != null ? Number(end) : null;
-    args.push('--download-sections', `*${fmtT(a)}-${b != null ? fmtT(b) : 'inf'}`);
-    // 키프레임이 아닌 곳에서도 정확히 자르기 (조금 느려짐)
-    if (exact) args.push('--force-keyframes-at-cuts');
-  }
-  args.push(url);
-  const p = run(args);
-  job.proc = p;
-  let err = '';
+  const hasSection = start != null || end != null;
+  const a = Math.max(0, Number(start) || 0);
+  const b = end != null ? Number(end) : null;
+  const plans = hasSection
+    ? [
+      ...(exact ? [{ section: true, exact: true }] : []),
+      { section: true, exact: false, label: '다른 방법으로 다시 받는 중' },
+      { section: false, cutAfter: true, label: '구간만 받기가 안 되는 영상이라 전체를 받은 뒤 자르는 중' },
+    ]
+    : [{ section: false }];
+
   const onData = (d) => {
     for (const line of String(d).split('\n')) {
       const m = line.match(/PROG\s+([\d.]+)%/);
-      if (m) { job.progress = Math.min(99, parseFloat(m[1])); job.stage = '받는 중'; }
-      else if (/\[Merger\]|\[ffmpeg\]|Destination/.test(line)) job.stage = '파일 만드는 중';
+      if (m) { job.progress = Math.min(99, parseFloat(m[1])); if (!job.fixedStage) job.stage = '받는 중'; }
+      else if (/\[Merger\]|\[ffmpeg\]|Destination/.test(line) && !job.fixedStage) job.stage = '파일 만드는 중';
     }
   };
-  p.stdout.on('data', onData);
-  p.stderr.on('data', (d) => { err += d; onData(d); });
-  p.on('close', (code) => {
-    job.proc = null;
-    if (job.status === 'cancelled') return;
-    const files = existsDir(dir) ? readdirSync(dir).filter((f) => !f.endsWith('.part') && !f.endsWith('.ytdl')) : [];
-    const mp4 = files.find((f) => f.endsWith('.mp4')) || files[0];
-    if (code === 0 && mp4) {
-      job.file = join(dir, mp4);
-      job.size = statSync(job.file).size;
-      job.status = 'done';
-      job.progress = 100;
-      job.stage = '완료';
-    } else {
-      job.status = 'error';
-      job.error = cleanErr(err) || '다운로드에 실패했어요';
+  const clearDir = () => { for (const f of existsDir(dir) ? readdirSync(dir) : []) rmSync(join(dir, f), { force: true }); };
+  const finish = (file) => {
+    job.file = file;
+    job.size = statSync(file).size;
+    job.status = 'done';
+    job.progress = 100;
+    job.stage = '완료';
+  };
+  const fail = (msg) => { job.status = 'error'; job.error = msg || '다운로드에 실패했어요'; };
+
+  const attempt = (i) => {
+    const plan = plans[i];
+    clearDir();
+    job.progress = 0;
+    job.fixedStage = plan.label || null;
+    if (plan.label) job.stage = plan.label;
+    const args = [
+      '--no-playlist', '--no-warnings', '--newline', '--no-part',
+      '-f', `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/bv*[height<=${height}]+ba/b[height<=${height}]/b`,
+      '--merge-output-format', 'mp4',
+      '-o', join(dir, 'clip.%(ext)s'),
+      '--progress-template', 'download:PROG %(progress._percent_str)s',
+    ];
+    if (plan.section) {
+      args.push('--download-sections', `*${fmtT(a)}-${b != null ? fmtT(b) : 'inf'}`);
+      // 키프레임이 아닌 곳에서도 정확히 자르기 (조금 느려짐)
+      if (plan.exact) args.push('--force-keyframes-at-cuts');
     }
-  });
+    args.push(url);
+    const p = run(args);
+    job.proc = p;
+    let err = '';
+    p.stdout.on('data', onData);
+    p.stderr.on('data', (d) => { err += d; onData(d); });
+    p.on('close', (code) => {
+      job.proc = null;
+      if (job.status === 'cancelled') return;
+      const files = existsDir(dir) ? readdirSync(dir).filter((f) => !f.endsWith('.part') && !f.endsWith('.ytdl')) : [];
+      const got = files.find((f) => f.endsWith('.mp4')) || files[0];
+      if (code === 0 && got) {
+        if (plan.cutAfter) cutLocal(join(dir, got), err);
+        else finish(join(dir, got));
+        return;
+      }
+      // 로그인·삭제 등 다시 해도 안 되는 오류는 바로 알림
+      const msg = cleanErr(err);
+      if (i + 1 < plans.length && !/Sign in|login|private|unavailable|removed|not exist|age|성인|19/i.test(msg)) attempt(i + 1);
+      else fail(msg);
+    });
+  };
+
+  // 전체를 받은 파일에서 구간만 잘라내기 (정확하게 자르려고 다시 인코딩)
+  const cutLocal = (src) => {
+    job.stage = '고른 구간만 잘라내는 중';
+    job.fixedStage = job.stage;
+    const out = join(dir, 'cut.mp4');
+    const args = ['-y', '-v', 'error', '-ss', String(a)];
+    if (b != null) args.push('-to', String(b));
+    args.push('-i', src, '-map', '0:v:0?', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out);
+    // -ss를 -i 앞에 두면 빠르게 찾아가고, -to는 입력 기준 시간이 아니므로 길이로 계산
+    if (b != null) { const k = args.indexOf('-to'); args.splice(k, 2, '-t', String(Math.max(0.1, b - a))); }
+    const p = spawn(cfg.ffmpegPath || 'ffmpeg', args, { windowsHide: true });
+    job.proc = p;
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => {
+      job.proc = null;
+      if (job.status === 'cancelled') return;
+      if (code === 0) { rmSync(src, { force: true }); finish(out); } else fail(`자르기 실패: ${String(err).trim().slice(0, 200)}`);
+    });
+  };
+
   jobs.set(id, job);
+  // 시험용: EDITIN_HELPER_START_PLAN=2 면 '전체 받은 뒤 자르기'부터 (실패 대비 경로 점검)
+  attempt(Math.min(plans.length - 1, Number(process.env.EDITIN_HELPER_START_PLAN) || 0));
   // 오래된 작업 정리
   if (jobs.size > MAX_JOBS * 4) for (const [k, j] of jobs) if (j.status !== 'running') { cleanup(j); jobs.delete(k); if (jobs.size <= MAX_JOBS * 2) break; }
   return job;
