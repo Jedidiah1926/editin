@@ -23,20 +23,33 @@ export class Inspector {
     this.engine = engine;
     this.actions = actions;
     this.open = new Set(['basic', 'text', 'textstyle', 'look', 'audio']);
-    on('selection', () => this.render());
+    on('selection', () => this.render(true));
     on('mode', () => this.render());
     on('project', ({ source, live } = {}) => {
       if (source === SRC || live) return;
       this.render();
     });
-    on('media-analyzed', () => this.render());
+    // 분석이 끝난 미디어가 선택한 클립의 것일 때만 다시 그림
+    on('media-analyzed', (id) => { if (selectedClips().some((c) => c.mediaId === id)) this.render(); });
     on('templates', () => this.render());
     on('cropmode', () => this.render());
     on('clip-dblclick', () => setTimeout(() => this.root.querySelector('textarea')?.focus(), 30));
-    this.render();
+    // 글자를 입력하는 동안 미뤄 둔 갱신은 입력칸을 벗어날 때 반영
+    this.root.addEventListener('focusout', () => setTimeout(() => {
+      if (this.pending && !this.isTyping()) this.render();
+    }, 0));
+    this.render(true);
   }
 
-  render() {
+  isTyping() {
+    const a = document.activeElement;
+    return !!a && this.root.contains(a) && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && /^(text|number|search)?$/.test(a.type)));
+  }
+
+  render(force = false) {
+    // 입력 중에 다시 그리면 입력칸이 사라져 글자가 끊기므로 미룸 (선택이 바뀐 경우는 즉시)
+    if (!force && this.isTyping()) { this.pending = true; return; }
+    this.pending = false;
     const sel = selectedClips();
     const scroll = this.root.scrollTop;
     this.root.replaceChildren();

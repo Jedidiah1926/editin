@@ -5,7 +5,7 @@ import {
   beginGesture, mutateLive, endGesture, mutate, maxDurFor, projectDuration, clipById,
 } from './store.js';
 import { h, fmtTime, fmtTimecode, clamp, toast } from './ui.js';
-import { addMediaClip, kindForMedia, addTrack } from './ops.js';
+import { addMediaClip, kindForMedia, addTrack, trackFor } from './ops.js';
 import { importFiles } from './media.js';
 
 const PAD = 16; // 0초 왼쪽 여백(px)
@@ -32,11 +32,12 @@ export class Timeline {
     this.ioRange = h('div', { class: 'tl-io' });
     this.tip = h('div', { class: 'tl-tip' });
     this.dropMark = h('div', { class: 'tl-drop' });
+    this.dropGhost = h('div', { class: 'tl-drop-ghost' });
     this.empty = h('div', { class: 'tl-empty' },
       h('div', { class: 'tl-empty-icon' }, '🎬'),
       h('div', {}, '영상·사진·음악을 여기로 끌어다 놓으세요'),
       h('div', { class: 'muted small' }, '또는 왼쪽 미디어에서 + 버튼을 누르면 순서대로 이어 붙어요'));
-    this.inner.append(this.rulerWrap, this.markers, this.lanes, this.ioRange, this.snapLine, this.playhead, this.dropMark);
+    this.inner.append(this.rulerWrap, this.markers, this.lanes, this.ioRange, this.snapLine, this.playhead, this.dropMark, this.dropGhost);
     this.scroll.append(this.inner, this.tip);
     root.append(this.heads, this.scroll, this.empty);
 
@@ -649,6 +650,52 @@ export class Timeline {
     });
   }
 
+  // ---------- 미디어 라이브러리에서 끌어오기 (포인터 방식) ----------
+
+  /** 끌고 있는 동안: 놓일 레이어·위치·길이를 미리 보여줌. 타임라인 위가 아니면 false */
+  externalHover(mediaId, x, y) {
+    const r = this.scroll.getBoundingClientRect();
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) { this.clearDrop(); return false; }
+    const m = mediaById(mediaId);
+    const target = this.dropTarget(m, x, y);
+    this.lanes.querySelectorAll('.lane.drop-target').forEach((l) => l.classList.remove('drop-target'));
+    const lane = this.laneEls?.get(target.trackId);
+    lane?.classList.add('drop-target');
+    this.dropMark.style.display = 'block';
+    this.dropMark.style.transform = `translateX(${this.x(target.t)}px)`;
+    if (lane) {
+      this.dropGhost.style.display = 'block';
+      this.dropGhost.style.left = `${this.x(target.t)}px`;
+      this.dropGhost.style.width = `${Math.max(6, target.dur * this.zoom)}px`;
+      this.dropGhost.style.top = `${this.lanes.offsetTop + lane.offsetTop + 3}px`;
+      this.dropGhost.style.height = `${lane.offsetHeight - 6}px`;
+      this.dropGhost.className = `tl-drop-ghost ghost-${m?.type || 'video'}`;
+    }
+    return true;
+  }
+
+  externalDrop(mediaId, x, y) {
+    if (!this.externalHover(mediaId, x, y)) return false;
+    const m = mediaById(mediaId);
+    const target = this.dropTarget(m, x, y);
+    this.clearDrop();
+    addMediaClip(mediaId, { at: target.t, trackId: target.trackId });
+    return true;
+  }
+
+  /** 놓일 트랙과 시간 계산 (종류가 맞지 않는 레이어 위면 같은 종류의 기본 레이어로) */
+  dropTarget(m, x, y) {
+    const kind = m ? kindForMedia(m) : 'video';
+    const laneEl = document.elementFromPoint(x, y)?.closest('.lane');
+    const tr = laneEl && trackById(laneEl.dataset.track);
+    const track = tr && tr.kind === kind && !tr.locked ? tr : trackFor(kind);
+    const dur = m ? (m.type === 'image' ? 4 : m.duration || 4) : 4;
+    let t = Math.max(0, this.clientToTime(x));
+    const pts = this.snapPoints(new Set());
+    t = Math.max(0, t + this.snap([t, t + dur], pts, false));
+    return { trackId: track.id, t, dur };
+  }
+
   dropMedia(mediaId, t, laneTrack) {
     const m = mediaById(mediaId);
     if (!m) return null;
@@ -660,6 +707,8 @@ export class Timeline {
 
   clearDrop() {
     this.dropMark.style.display = 'none';
+    this.dropGhost.style.display = 'none';
+    this.snapLine.style.display = 'none';
     this.lanes.querySelectorAll('.lane.drop-target').forEach((l) => l.classList.remove('drop-target'));
   }
 }

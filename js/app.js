@@ -19,6 +19,7 @@ import { initSubtitleUI } from './subtitle-ui.js';
 import { openYouTubeImport, isYouTubeUrl, updateMessage } from './youtube.js';
 import { initTransformUI, toggleCrop, setCropMode, isCropMode } from './transform-ui.js';
 import { fitSubtitleToFormat } from './subtitles.js';
+import { cropForRatio } from './geometry.js';
 import { loadTemplates } from './templates.js';
 import { openExport } from './export.js';
 import { TEXT_STYLES, TRANSITIONS } from './presets.js';
@@ -48,10 +49,12 @@ on('history', () => {
 emit('history');
 
 function doUndo() {
+  engine.pause(); // 재생 중에 되돌리면 화면과 소리가 어긋나므로 먼저 멈춤
   const l = undo();
   if (l) toast(`↩ 되돌림: ${l}`); else toast('더 되돌릴 작업이 없어요');
 }
 function doRedo() {
+  engine.pause();
   const l = redo();
   if (l) toast(`↪ 다시 실행: ${l}`);
 }
@@ -67,13 +70,13 @@ nameEl.addEventListener('change', () => mutate('이름 변경', (p) => { p.name 
 nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameEl.blur(); e.stopPropagation(); });
 on('project', () => { if (document.activeElement !== nameEl) nameEl.value = project().name; });
 
-for (const b of document.querySelectorAll('[data-mode]')) {
+for (const b of document.querySelectorAll('.mode-toggle [data-mode]')) {
   b.addEventListener('click', () => setMode(b.dataset.mode));
 }
 function setMode(mode) {
   state.mode = mode;
   document.body.dataset.mode = mode;
-  for (const b of document.querySelectorAll('[data-mode]')) b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
+  for (const b of document.querySelectorAll('.mode-toggle [data-mode]')) b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false');
   emit('mode');
   scheduleSave();
 }
@@ -371,7 +374,7 @@ function renderMedia() {
     const rt = mediaRuntime.get(m.id);
     const used = p.clips.filter((c) => c.mediaId === m.id).length;
     const icon = { video: '🎞', audio: '♪', image: '🖼' }[m.type];
-    const item = h('div', { class: `media-item ${rt ? '' : 'offline'}`, draggable: 'true', title: `${m.name}\n더블클릭 또는 + 버튼으로 추가 · 타임라인으로 끌어다 놓기` },
+    const item = h('div', { class: `media-item ${rt ? '' : 'offline'}`, title: `${m.name}\n타임라인이나 미리보기로 끌어다 놓기 · 더블클릭 또는 + 버튼으로 추가` },
       h('div', { class: 'media-thumb', style: rt?.poster ? { backgroundImage: `url("${rt.poster}")` } : {} },
         !rt?.poster ? h('span', { class: 'media-icon' }, icon) : null,
         rt?.analyzing ? h('span', { class: 'media-busy', title: '분석 중' }) : null,
@@ -382,9 +385,9 @@ function renderMedia() {
       ),
       h('div', { class: 'media-name' }, h('span', {}, icon), ' ', m.name));
     item.addEventListener('dblclick', () => addMediaClip(m.id));
-    item.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-editin-media', m.id);
-      e.dataTransfer.effectAllowed = 'copy';
+    item.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('.media-add')) return;
+      startMediaDrag(e, m, rt, icon);
     });
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -400,6 +403,57 @@ function renderMedia() {
 }
 on('project', ({ live } = {}) => { if (!live) renderMedia(); });
 on('media-analyzed', renderMedia);
+
+/** 미디어를 끌어서 타임라인(원하는 위치·레이어) 또는 미리보기(재생 위치의 오버레이)에 놓기 */
+function startMediaDrag(e, m, rt, icon) {
+  const sx = e.clientX;
+  const sy = e.clientY;
+  let ghost = null;
+  const stageEl = $('#stage');
+  const overStage = (x, y) => {
+    const r = stageEl.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
+  const end = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('keydown', esc, true);
+    stageEl.classList.remove('drop-here');
+    document.body.classList.remove('dragging-media');
+    ghost?.remove();
+    timeline.clearDrop();
+  };
+  const move = (ev) => {
+    if (!ghost) {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+      ghost = h('div', { class: 'media-ghost' },
+        rt?.poster ? h('img', { src: rt.poster, alt: '' }) : h('span', { class: 'media-ghost-icon' }, icon),
+        h('span', { class: 'media-ghost-name' }, m.name));
+      document.body.append(ghost);
+      document.body.classList.add('dragging-media');
+    }
+    ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 14}px)`;
+    const onTimeline = timeline.externalHover(m.id, ev.clientX, ev.clientY);
+    const onStage = !onTimeline && overStage(ev.clientX, ev.clientY);
+    stageEl.classList.toggle('drop-here', onStage);
+    ghost.classList.toggle('ok', onTimeline || onStage);
+  };
+  const up = (ev) => {
+    const dragged = !!ghost;
+    const onStage = dragged && overStage(ev.clientX, ev.clientY);
+    const handledTimeline = dragged && timeline.externalDrop(m.id, ev.clientX, ev.clientY);
+    end();
+    if (!dragged || handledTimeline) return;
+    if (onStage) {
+      addMediaClip(m.id, { at: state.time, overlay: true });
+      toast(m.type === 'audio' ? '재생 위치에 소리를 넣었어요' : '재생 위치에 겹쳐 넣었어요 (오버레이 레이어)');
+    }
+  };
+  const esc = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); end(); } };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('keydown', esc, true);
+}
 
 function removeMedia(id) {
   mutate('미디어 제거', (p) => {
@@ -525,16 +579,44 @@ function setAspect(id, auto = false) {
   const a = ASPECTS[id];
   if (!a) return;
   const label = FORMAT_OF[id] ? `${FORMAT_OF[id] === 'short' ? '숏폼' : '롱폼'} (${a.label})` : a.label;
+  const fitted = [];
   mutate(FORMAT_OF[id] ? `${label}으로 변경` : '화면 비율 변경', (p) => {
+    const oldRatio = p.width / p.height;
+    const newRatio = a.width / a.height;
     p.aspect = id;
     p.width = a.width;
     p.height = a.height;
     if (!auto) p.formatChosen = true;
     // 자막 위치를 형식에 맞게 (숏폼은 아래쪽이 버튼·설명에 가려짐)
     for (const c of p.clips) if (c.type === 'text' && c.text.role) fitSubtitleToFormat(c.text, p);
+    // 영상·사진도 새 화면에 맞춰 따라가게
+    for (const c of p.clips) {
+      if (c.type !== 'video' && c.type !== 'image') continue;
+      const tf = c.transform;
+      const fullFrame = Math.abs(tf.scale - 1) < 0.01 && Math.abs(tf.x) < 0.01 && Math.abs(tf.y) < 0.01;
+      const m = p.media.find((x) => x.id === c.mediaId);
+      if (c.cropRatio && Math.abs(c.cropRatio - oldRatio) < 0.01 && m?.width) {
+        // 화면 비율로 잘라 둔 영상은 새 비율로 다시 자름
+        const base = c.cropBase || { l: 0, t: 0, r: 0, b: 0 };
+        const fx = 1 - base.l - base.r;
+        const fy = 1 - base.t - base.b;
+        const inner = cropForRatio(m.width * fx, m.height * fy, newRatio);
+        c.crop = { l: base.l + inner.l * fx, r: base.r + inner.r * fx, t: base.t + inner.t * fy, b: base.b + inner.b * fy };
+        c.cropRatio = newRatio;
+        fitted.push(c.id);
+      } else if (fullFrame && c.fit === 'contain' && m?.width && Math.abs(m.width / m.height - newRatio) > 0.02) {
+        c.fit = 'cover';
+        fitted.push(c.id);
+      }
+    }
   });
-  const vis = project().clips.some((c) => (c.type === 'video' || c.type === 'image') && c.fit !== 'cover');
-  toast(auto ? `영상에 맞춰 ${label}로 정했어요` : `${label}로 바꿨어요`, vis && !auto ? { action: { label: '영상 꽉 채우기', run: () => fitAll('cover') } } : {});
+  if (auto) { toast(`영상에 맞춰 ${label}로 정했어요`); return; }
+  toast(fitted.length ? `${label}로 바꿨어요 · 영상도 화면에 꽉 차게 맞췄어요` : `${label}로 바꿨어요`, fitted.length ? {
+    action: {
+      label: '원본 전체 보이기',
+      run: () => mutate('전체 보이기', (p) => { for (const c of p.clips) if (fitted.includes(c.id) && !c.cropRatio) c.fit = 'contain'; }),
+    },
+  } : {});
 }
 
 // ---------- 롱폼 / 숏폼 ----------
@@ -726,4 +808,4 @@ function welcome() {
 boot();
 
 // 디버깅/테스트용
-window.editin = { state, engine, timeline, project, mutate, importFiles: doImport };
+window.editin = { state, engine, timeline, inspector, project, mutate, importFiles: doImport };

@@ -595,3 +595,32 @@ body[data-mode='easy'] .tl-toolbar .tool { font-size: 13.5px; padding: 6px 11px;
 .cmd-row code { flex: 1; background: #0b0d12; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: 12.5px ui-monospace, monospace; overflow-x: auto; white-space: nowrap; }
 @media (max-width: 820px) { .yt-range { grid-template-columns: 1fr; } }
 .yt-tool-bar { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+
+/* ---------- 미디어 끌어오기 ---------- */
+.media-item { touch-action: none; }
+body.dragging-media, body.dragging-media * { cursor: grabbing !important; user-select: none; }
+.media-ghost {
+  position: fixed; left: 0; top: 0; z-index: 400; pointer-events: none; display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px 4px 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); opacity: 0.75; max-width: 260px;
+}
+.media-ghost.ok { opacity: 1; border-color: var(--accent); }
+.media-ghost img { width: 56px; height: 32px; object-fit: cover; border-radius: 5px; }
+.media-ghost-icon { width: 32px; text-align: center; font-size: 18px; }
+.media-ghost-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-drop-ghost { position: absolute; display: none; border-radius: 6px; border: 2px dashed #fff; background: rgba(91,124,255,0.35); pointer-events: none; z-index: 4; }
+.tl-drop-ghost.ghost-audio { background: rgba(47,155,98,0.4); }
+.tl-drop-ghost.ghost-image { background: rgba(47,143,138,0.4); }
+.stage.drop-here { box-shadow: inset 0 0 0 3px var(--accent); }
+.stage.drop-here::after { content: '여기에 놓으면 재생 위치에 겹쳐 넣어요'; position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; padding: 5px 12px; border-radius: 99px; font-size: 13px; font-weight: 700; pointer-events: none; }
+
+/* 유튜브: 전체/구간, 세로 화면 채우기 미리보기 */
+.yt-mode-row { display: flex; align-items: center; gap: 12px; }
+.yt-mode { flex: 0 0 auto; }
+.yt-range[hidden] { display: none !important; }
+.fill-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.fill-card { padding: 10px 6px; gap: 6px; }
+.fill-pv { position: relative; display: block; height: 116px; max-width: 100%; background: #000; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.12); }
+.fill-fg { position: absolute; inset: 0; background: var(--thumb) center / contain no-repeat; }
+.fill-cover .fill-fg { background-size: cover; }
+.fill-bg { position: absolute; inset: -12%; background: var(--thumb) center / cover no-repeat; filter: blur(7px) brightness(0.6) saturate(1.25); }

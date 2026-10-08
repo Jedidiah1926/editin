@@ -64,7 +64,11 @@ export function addMediaClip(mediaId, opts = {}) {
     if (opts.at != null) start = opts.at;
     else if (tr.magnetic) start = clipsOnTrack(tr.id).reduce((e, x) => Math.max(e, clipEnd(x)), 0);
     else start = state.time;
-    const target = tr.magnetic && opts.at != null ? tr : (opts.trackId ? tr : findFreeTrack(p, kind, start, c.dur, tr.id));
+    // overlay: 메인 레이어가 아닌 빈 영상 레이어에 (없으면 새로 만듦)
+    const overlayId = p.tracks.find((t) => t.kind === kind && !t.magnetic)?.id;
+    const target = opts.overlay
+      ? (overlayId ? findFreeTrack(p, kind, start, c.dur, overlayId) : addTrack(p, kind))
+      : tr.magnetic && opts.at != null ? tr : (opts.trackId ? tr : findFreeTrack(p, kind, start, c.dur, tr.id));
     c.trackId = target.id;
     if (target.magnetic && opts.at != null) {
       // 자석 트랙: 놓은 위치의 클립 앞/뒤에 끼워 넣기

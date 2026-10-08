@@ -37,16 +37,22 @@ export function parseYouTube(url) {
   }
 }
 
-/** "1:02:03", "62:03", "3723", "1h2m3s" → 초 */
+/** "1:02:03", "1;02;03", "62:03", "3723", "1h2m3s", "1시간 2분 3초" → 초 */
 export function parseTime(s) {
-  s = String(s).trim();
+  s = String(s).trim()
+    .replace(/[;；：]/g, ':') // 세미콜론·전각 콜론도 콜론으로
+    .replace(/\s*(시간|hours?|hrs?)\s*/gi, 'h')
+    .replace(/\s*(분|minutes?|mins?)\s*/gi, 'm')
+    .replace(/\s*(초|seconds?|secs?)\s*/gi, 's')
+    .replace(/\s+/g, '');
   if (!s) return null;
   if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
-  const hms = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/i);
-  if (hms && (hms[1] || hms[2] || hms[3])) return (+hms[1] || 0) * 3600 + (+hms[2] || 0) * 60 + (+hms[3] || 0);
-  const parts = s.split(':').map(Number);
-  if (parts.some((n) => Number.isNaN(n))) return null;
-  return parts.reduce((acc, n) => acc * 60 + n, 0);
+  const hms = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s?)?$/i);
+  if (hms && (hms[1] || hms[2]) ) return (+hms[1] || 0) * 3600 + (+hms[2] || 0) * 60 + (+hms[3] || 0);
+  if (hms && hms[3] && /s$/i.test(s)) return +hms[3];
+  const parts = s.split(':');
+  if (parts.length > 3 || parts.some((p) => p === '' || Number.isNaN(Number(p)))) return null;
+  return parts.map(Number).reduce((acc, n) => acc * 60 + n, 0);
 }
 
 export function fmtClock(t) {
@@ -144,14 +150,25 @@ export function openYouTubeImport(prefill = '') {
     const dur = info.duration || null;
     let start = yt?.start ?? 0;
     let end = dur ? Math.min(dur, start + 60) : start + 60;
-    const opts = { height: 1080, exact: true, credit: true, fill: project().height > project().width ? 'blurfill' : 'keep' };
+    const narrow = project().width / project().height < 1.3; // 세로·정사각 화면
+    const opts = { height: 1080, exact: true, credit: true, full: false, fill: narrow ? 'blurfill' : 'keep' };
     const startInp = h('input', { class: 'text-input time-input', value: fmtClock(start), 'aria-label': '시작 시간' });
     const endInp = h('input', { class: 'text-input time-input', value: fmtClock(end), 'aria-label': '끝 시간' });
     const lenEl = h('span', { class: 'yt-len' });
     const warn = h('div', { class: 'muted small' });
+    const rangeBox = h('div', { class: 'yt-range' });
+    const goBtn2 = h('button', { class: 'btn primary' });
     const sync = () => {
       startInp.value = fmtClock(start);
       endInp.value = fmtClock(end);
+      rangeBox.hidden = opts.full;
+      goBtn2.textContent = opts.full ? '⬇ 전체 영상 가져오기' : '⬇ 이 구간 가져오기';
+      if (opts.full) {
+        lenEl.textContent = dur ? `전체 ${fmtDur(dur)}` : '전체 영상';
+        lenEl.classList.remove('bad');
+        warn.textContent = dur && dur > 1200 ? `⚠️ 전체가 ${Math.round(dur / 60)}분이에요. 받는 데 오래 걸리고 편집도 무거워져요. 필요한 부분만 고르는 걸 추천해요.` : '';
+        return;
+      }
       const len = end - start;
       lenEl.textContent = len > 0 ? `길이 ${fmtDur(len)}` : '끝이 시작보다 뒤여야 해요';
       lenEl.classList.toggle('bad', len <= 0);
@@ -208,32 +225,61 @@ export function openYouTubeImport(prefill = '') {
       i.addEventListener('change', () => { opts[key] = i.checked; });
       return h('label', { class: 'check' }, i, h('span', {}, label, sub ? h('span', { class: 'muted small block' }, sub) : null));
     };
-    const vertical = project().height > project().width;
+    // 세로 화면 채우는 방식: 썸네일로 미리보기
+    // 썸네일이 없으면 16:9 색 막대 그림으로 대신
+    const placeholder = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9"><rect width="4" height="9" fill="#e5484d"/><rect x="4" width="4" height="9" fill="#f5a524"/><rect x="8" width="4" height="9" fill="#3ddc97"/><rect x="12" width="4" height="9" fill="#5b7cff"/></svg>');
+    const thumb = `url("${info.thumbnail || placeholder}")`;
+    const fillCard = ([v, label, desc]) => {
+      const pv = h('span', { class: `fill-pv fill-${v}`, style: { '--thumb': thumb, aspectRatio: `${project().width} / ${project().height}` } },
+        v === 'blurfill' ? h('span', { class: 'fill-bg' }) : null,
+        h('span', { class: 'fill-fg' }));
+      const b = h('button', { class: `card fill-card ${opts.fill === v ? 'active' : ''}`, title: desc, onclick: () => {
+        opts.fill = v;
+        b.parentNode.querySelectorAll('.fill-card').forEach((x) => x.classList.toggle('active', x === b));
+      } }, pv, h('span', { class: 'card-name' }, label), h('span', { class: 'muted small' }, desc));
+      return b;
+    };
+    const fillCards = h('div', { class: 'fill-cards' }, [
+      ['blurfill', '원본 + 흐린 배경', '잘리는 곳 없이'],
+      ['cover', '꽉 채우기', '가운데만 크게'],
+      ['keep', '그대로', '위아래 검은 여백'],
+    ].map(fillCard));
+    const modeSeg = h('div', { class: 'seg yt-mode' }, [[false, '✂ 구간 고르기'], [true, '🎞 전체 영상']].map(([v, l]) => {
+      const b = h('button', { class: opts.full === v ? 'active' : '', onclick: () => {
+        opts.full = v;
+        modeSeg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        sync();
+      } }, l);
+      return b;
+    }));
+    rangeBox.append(
+      h('div', { class: 'ctl' }, h('label', {}, '시작'), h('div', { class: 'row' }, startInp, nowBtn('지금 위치', (t) => { start = t; if (end <= start) end = start + 30; }))),
+      h('div', { class: 'ctl' }, h('label', {}, '끝'), h('div', { class: 'row' }, endInp, nowBtn('지금 위치', (t) => { end = t; }))),
+      h('div', { class: 'ctl yt-range-side' }, h('button', { class: 'btn small', onclick: preview }, '▶ 구간 미리보기')));
+    goBtn2.onclick = () => {
+      if (!opts.full && end - start <= 0.5) { toast('구간을 다시 확인해 주세요'); return; }
+      cleanup?.();
+      download(url, info, opts.full ? { ...opts, start: null, end: null } : { ...opts, start, end });
+    };
     stage.replaceChildren(...[
       h('div', { class: 'yt-meta' },
         h('b', {}, info.title || '제목 없음'),
         h('span', { class: 'muted small' }, [info.channel, dur ? fmtClock(dur) : null, info.isLive ? '라이브 중' : null].filter(Boolean).join(' · '))),
       info.isLive ? h('div', { class: 'check-item warn' }, '⚠️ 아직 진행 중인 라이브예요. 방송이 끝난 뒤 다시보기 링크로 가져오는 게 안정적이에요.') : null,
       playerBox,
-      h('div', { class: 'yt-range' },
-        h('div', { class: 'ctl' }, h('label', {}, '시작'), h('div', { class: 'row' }, startInp, nowBtn('지금 위치', (t) => { start = t; if (end <= start) end = start + 30; }))),
-        h('div', { class: 'ctl' }, h('label', {}, '끝'), h('div', { class: 'row' }, endInp, nowBtn('지금 위치', (t) => { end = t; }))),
-        h('div', { class: 'ctl yt-range-side' }, lenEl, h('button', { class: 'btn small', onclick: preview }, '▶ 구간 미리보기'))),
+      h('div', { class: 'yt-mode-row' }, modeSeg, lenEl),
+      rangeBox,
       warn,
+      narrow ? h('div', { class: 'ctl' }, h('label', {}, '세로 화면 채우는 방식'), fillCards) : null,
       h('div', { class: 'tpl-grid' },
         h('div', {},
-          h('div', { class: 'ctl' }, h('label', {}, '화질'), seg([[720, '720p'], [1080, '1080p']], 'height')),
-          vertical ? h('div', { class: 'ctl' }, h('label', {}, '세로 화면 채우기'), seg([['blurfill', '원본 + 흐린 배경'], ['cover', '가운데 잘라 꽉 채우기'], ['keep', '그대로']], 'fill')) : null),
+          h('div', { class: 'ctl' }, h('label', {}, '화질'), seg([[720, '720p'], [1080, '1080p']], 'height'))),
         h('div', {},
           cb('exact', '정확한 시간에 자르기', '조금 느리지만 고른 시간에 딱 맞게 잘라요'),
           cb('credit', '출처 표시 넣기', `‘출처: ${info.channel || '채널'}’ 글자를 영상 위에 넣어요`))),
       h('div', { class: 'modal-actions' },
         h('button', { class: 'btn', onclick: () => close() }, '취소'),
-        h('button', { class: 'btn primary', onclick: () => {
-          if (end - start <= 0.5) { toast('구간을 다시 확인해 주세요'); return; }
-          cleanup?.();
-          download(url, info, { ...opts, start, end });
-        } }, '⬇ 이 구간 가져오기')),
+        goBtn2),
     ].filter(Boolean));
     sync();
   }
@@ -245,7 +291,7 @@ export function openYouTubeImport(prefill = '') {
     let cancelled = false;
     stepUrl.hidden = true;
     stage.replaceChildren(
-      h('div', { class: 'yt-meta' }, h('b', {}, info.title || ''), h('span', { class: 'muted small' }, `${fmtClock(o.start)} ~ ${fmtClock(o.end)} (${fmtDur(o.end - o.start)})`)),
+      h('div', { class: 'yt-meta' }, h('b', {}, info.title || ''), h('span', { class: 'muted small' }, o.start == null ? '전체 영상' : `${fmtClock(o.start)} ~ ${fmtClock(o.end)} (${fmtDur(o.end - o.start)})`)),
       h('div', { class: 'progress' }, bar), label,
       h('p', { class: 'muted small' }, '고른 구간만 받아요. 원본 길이와 인터넷 속도에 따라 시간이 걸려요.'),
       h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: async () => {
@@ -276,7 +322,8 @@ export function openYouTubeImport(prefill = '') {
       if (cancelled) return;
       const ext = r.headers.get('X-File-Ext') || 'mp4';
       const safe = (info.title || 'youtube').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
-      const file = new File([blob], `${safe} [${fmtClock(o.start).replace(/:/g, '.')}].${ext}`, { type: blob.type || 'video/mp4' });
+      const tag = o.start == null ? '' : ` [${fmtClock(o.start).replace(/:/g, '.')}]`;
+      const file = new File([blob], `${safe}${tag}.${ext}`, { type: blob.type || 'video/mp4' });
       close();
       await addToProject(file, info, url, o);
     } catch (e) {
@@ -309,9 +356,10 @@ async function addToProject(file, info, url, o) {
   const c = addMediaClip(m.id, { at: main.length ? clipEnd(main[main.length - 1]) : 0, trackId: 'v1' });
   if (!c) return;
   const vertical = project().height > project().width;
+  const narrow = project().width / project().height < 1.3;
   mutate('가져온 영상 배치', (p) => {
     const x = p.clips.find((y) => y.id === c.id);
-    if (vertical && o.fill !== 'keep') x.fit = o.fill;
+    if (narrow) x.fit = o.fill === 'keep' ? 'contain' : o.fill;
     if (o.credit && (info.channel || info.title)) {
       const st = textStyleById('minimal');
       const t = defaultClip('text', {
@@ -322,7 +370,7 @@ async function addToProject(file, info, url, o) {
     }
   });
   state.time = c.start;
-  toast(`'${info.title || '영상'}' ${fmtClock(o.start)}~${fmtClock(o.end)} 구간을 가져왔어요`, { duration: 5000 });
+  toast(o.start == null ? `'${info.title || '영상'}' 전체를 가져왔어요` : `'${info.title || '영상'}' ${fmtClock(o.start)}~${fmtClock(o.end)} 구간을 가져왔어요`, { duration: 5000 });
 }
 
 function appToolError(retry, health) {
