@@ -158,11 +158,7 @@ export function openYouTubeImport(prefill = '') {
   async function go() {
     const url = urlInp.value.trim();
     if (!/^https?:\/\//.test(url)) { toast('링크를 붙여넣어 주세요'); return; }
-    const link = parseLink(url);
-    if (link?.platform === 'chzzk' && link.kind === 'clip') {
-      stage.replaceChildren(h('div', { class: 'check-item warn' }, '⚠️ 치지직 클립 링크는 아직 가져올 수 없어요. 클립의 원본 다시보기 링크(chzzk.naver.com/video/…)를 넣고 구간을 골라 주세요.'));
-      return;
-    }
+
     goBtn.disabled = true;
     stage.replaceChildren(h('div', { class: 'muted' }, '도우미 확인 중…'));
     const health = await checkHelper();
@@ -186,7 +182,8 @@ export function openYouTubeImport(prefill = '') {
     let start = link?.start ?? 0;
     let end = dur ? Math.min(dur, start + 60) : start + 60;
     const narrow = project().width / project().height < 1.3; // 세로·정사각 화면
-    const opts = { height: 1080, exact: true, credit: true, full: false, fill: narrow ? 'blurfill' : 'keep' };
+    // 클립은 짧아서 기본으로 전체를 가져옴
+    const opts = { height: 1080, exact: true, credit: true, full: !!info.isClip, fill: narrow ? 'blurfill' : 'keep' };
     const startInp = h('input', { class: 'text-input time-input', value: fmtClock(start), 'aria-label': '시작 시간' });
     const endInp = h('input', { class: 'text-input time-input', value: fmtClock(end), 'aria-label': '끝 시간' });
     const lenEl = h('span', { class: 'yt-len' });
@@ -239,8 +236,8 @@ export function openYouTubeImport(prefill = '') {
       });
     } else {
       // 치지직 등: 플레이어를 넣을 수 없어서 썸네일 + 원래 사이트에서 시간 확인
-      const chzzkUrl = link?.platform === 'chzzk' && link.kind === 'video'
-        ? () => `https://chzzk.naver.com/video/${link.id}${start ? `?currentTime=${Math.floor(start)}` : ''}` : null;
+      const chzzkUrl = link?.platform === 'chzzk' && link.kind !== 'live'
+        ? () => (link.kind === 'clip' ? `https://chzzk.naver.com/clips/${link.id}` : `https://chzzk.naver.com/video/${link.id}${start ? `?currentTime=${Math.floor(start)}` : ''}`) : null;
       playerBox.replaceChildren(
         info.thumbnail ? h('img', { src: info.thumbnail, alt: '', class: 'yt-thumb' }) : null,
         h('div', { class: 'yt-noplayer-note' },
@@ -347,7 +344,7 @@ export function openYouTubeImport(prefill = '') {
     try {
       const { job } = await api('/download', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, start: o.start, end: o.end, height: o.height, exact: o.exact }),
+        body: JSON.stringify({ url, start: o.start, end: o.end, height: o.height, exact: o.exact, engine: info.engine }),
       });
       jobId = job;
       for (;;) {

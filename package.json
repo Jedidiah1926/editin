@@ -1,6 +1,6 @@
 {
   "name": "editin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "누구나 쉽게, 그러나 제대로 하는 영상 편집기",
   "type": "module",
@@ -49,6 +49,13 @@
         "to": "bin",
         "filter": [
           "yt-dlp*"
+        ]
+      },
+      {
+        "from": "vendor/streamlink",
+        "to": "streamlink",
+        "filter": [
+          "**/*"
         ]
       }
     ],

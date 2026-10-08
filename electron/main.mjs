@@ -9,7 +9,7 @@ import { dirname, join, normalize, sep } from 'node:path';
 import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { startHelper, hasFfmpeg } from '../tools/yt-helper.mjs';
+import { startHelper, hasFfmpeg, findStreamlink } from '../tools/yt-helper.mjs';
 import { prepareYtDlp, autoUpdate } from './ytdlp.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,12 +51,24 @@ function serveFiles() {
   });
 }
 
+/** 앱에 들어 있는 streamlink (치지직 다시보기·클립용). 없으면 설치된 것을 찾음 */
+function streamlinkPath() {
+  const exe = process.platform === 'win32' ? 'streamlink.exe' : 'streamlink';
+  const bundled = [
+    join(process.resourcesPath || '', 'streamlink', 'bin', exe),
+    join(ROOT, 'vendor', 'streamlink', 'bin', exe),
+  ].filter((p) => existsSync(p));
+  return findStreamlink([...bundled.map((p) => [p, []]), ['streamlink', []], ['python3', ['-m', 'streamlink']], ['python', ['-m', 'streamlink']]]);
+}
+
 async function startServices() {
   ytdlp = prepareYtDlp(ROOT);
+  const streamlink = streamlinkPath();
   const ff = ffmpegPath();
   helper = await startHelper({
     port: 0,
     ytdlp,
+    streamlink,
     ffmpeg: !!ff,
     ffmpegPath: ff === 'ffmpeg' ? null : ff,
     embedded: true,

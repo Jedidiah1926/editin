@@ -40,6 +40,25 @@ jobs:
           if ($want -ne $have) { throw "yt-dlp 체크섬 불일치: $want / $have" }
           ./vendor/yt-dlp.exe --version
 
+      - name: streamlink 받기 (치지직 다시보기·클립용, 최신 포터블 빌드)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = gh release view --repo streamlink/windows-builds --json assets,tagName | ConvertFrom-Json
+          $zip = $assets.assets | Where-Object { $_.name -match '-x86_64\.zip$' } | Select-Object -First 1
+          if (-not $zip) { throw "streamlink 포터블 빌드를 찾지 못했어요" }
+          Write-Host "streamlink $($assets.tagName): $($zip.name)"
+          gh release download $assets.tagName --repo streamlink/windows-builds --pattern $zip.name --dir sl
+          Expand-Archive "sl/$($zip.name)" -DestinationPath sl/x
+          $root = Get-ChildItem sl/x -Directory | Select-Object -First 1
+          # 앱에 이미 ffmpeg가 있으므로 streamlink에 딸린 ffmpeg는 빼서 용량을 줄임
+          Remove-Item -Recurse -Force "$($root.FullName)/ffmpeg" -ErrorAction SilentlyContinue
+          Move-Item $root.FullName vendor/streamlink
+          ./vendor/streamlink/bin/streamlink.exe --version
+          ./vendor/streamlink/bin/streamlink.exe --can-handle-url "https://chzzk.naver.com/clips/test"
+          if ($LASTEXITCODE -ne 0) { throw "streamlink가 치지직 링크를 인식하지 못해요" }
+
       - name: 앱 빌드 (설치 파일)
         run: npx electron-builder --win nsis --x64 --publish never
 
@@ -47,7 +66,7 @@ jobs:
         shell: pwsh
         run: |
           $app = "dist/win-unpacked"
-          foreach ($f in @("$app/editin.exe", "$app/resources/bin/yt-dlp.exe", "$app/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe")) {
+          foreach ($f in @("$app/editin.exe", "$app/resources/bin/yt-dlp.exe", "$app/resources/streamlink/bin/streamlink.exe", "$app/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe")) {
             if (!(Test-Path $f)) { throw "빠진 파일: $f" }
             Write-Host "OK $f ($((Get-Item $f).Length) bytes)"
           }
@@ -57,6 +76,7 @@ jobs:
           & "$app/editin.exe" --version
           & "$app/resources/bin/yt-dlp.exe" -v --js-runtimes "node:$((Resolve-Path "$app/editin.exe").Path)" --version 2>&1 | Select-String "JS runtimes|yt-dlp version"
           Remove-Item Env:ELECTRON_RUN_AS_NODE
+          & "$app/resources/streamlink/bin/streamlink.exe" --version
           Get-ChildItem dist -Filter *.exe | Select-Object Name, Length
 
       - name: 실행 확인 (20초간 켜 두기)
